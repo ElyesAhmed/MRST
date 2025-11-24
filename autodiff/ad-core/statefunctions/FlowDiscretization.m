@@ -2,6 +2,13 @@ classdef FlowDiscretization < StateFunctionGrouping
     % Function grouping for Darcy-type flux discretization. The defaults
     % gives a industry-standard single-point upwind scheme with a two-point
     % flux discretization which emphasizes robustness and efficiency.
+    %Discretization and state function grouping for bio-chemistry flow
+    % Author: [Stéphanie Delage Santacreu]
+    % Date: [16/09/2025]
+    % Organization: [Université de Pau et des Pays de l'Adour, E2S UPPA, CNRS, LFCR, UMR5150, Pau, France]
+    % ---------------------------------------------------------------------------
+
+
     properties
         PermeabilityPotentialGradient % K * (grad(p) + rho g dz)
         PressureGradient % Gradient of phase pressures
@@ -13,6 +20,9 @@ classdef FlowDiscretization < StateFunctionGrouping
         ComponentTotalFlux % Total mass flux for each component
         ComponentPhaseFlux % Phase fluxes for each component
         Transmissibility % Face-based transmissibility
+        ComponentPhaseMolecularDiffFlux %Molecular diffusion SDS modif
+        ComponentTotalMolecularDiffFlux %Molecular diffusion SDS modif
+        
     end
 
     properties (Access = protected)
@@ -26,6 +36,10 @@ classdef FlowDiscretization < StateFunctionGrouping
             props@StateFunctionGrouping('FluxDisc');
             % Darcy flux
             props = props.setStateFunction('Transmissibility', Transmissibility(model));
+            % props =
+            % props.setStateFunction('Transmissibility',DynamicFlowTransmissibility(model,
+            % 'Permeability')); dans molediffusFlowdiscretization. Quelle
+            % est la difference?????SDS modif
             props = props.setStateFunction('PermeabilityPotentialGradient', PermeabilityPotentialGradient(model, tpfa));
             props = props.setStateFunction('PressureGradient', PressureGradient(model));
             props = props.setStateFunction('GravityPotentialDifference', GravityPotentialDifference(model));
@@ -47,6 +61,12 @@ classdef FlowDiscretization < StateFunctionGrouping
             props = props.setStateFunction('ComponentPhaseFlux', ComponentPhaseFlux(model));
             props = props.setStateFunction('ComponentTotalFlux', ComponentTotalFlux(model));
             props = props.setStateFunction('PhaseFlux', PhaseFlux(model));
+            
+            props = props.setStateFunction('ComponentPhaseMolecularDiffFlux', ...
+                ComponentPhaseMolecularDiffFlux(model));%molecular diffusion SDS modif
+            props = props.setStateFunction('ComponentTotalMolecularDiffFlux', ...
+                ComponentTotalMolecularDiffFlux(model));%molecular diffusion SDS modif
+
 
             % Flow discretizer
             props.FlowStateBuilder = ImplicitFlowStateBuilder();
@@ -98,6 +118,20 @@ classdef FlowDiscretization < StateFunctionGrouping
             end
             for c = 1:ncomp
                 acc{c} = (mass{c} - mass0{c})./dt;
+            end
+
+            %molecular diffusion SDS modif
+            if model.moleculardiffusion
+                act = model.getActivePhases();
+                nph = sum(act);
+                if model.moleculardiffusion
+                    Jmoldiff = model.getProps(flowState, 'ComponentPhaseMolecularDiffFlux');
+                    for c = 1:ncomp
+                        for ph = 1:nph
+                            v{c} = v{c} + Jmoldiff{c,ph};
+                        end
+                    end
+                end
             end
         end
 

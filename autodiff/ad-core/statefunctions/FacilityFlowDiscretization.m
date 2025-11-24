@@ -3,6 +3,8 @@ classdef FacilityFlowDiscretization < StateFunctionGrouping
         PhaseFlux               % Phase flux in well-bore and to reservoir
         ComponentTotalFlux      % Total mass flux of each component
         ComponentPhaseFlux      % Mass flux of each component, in each phase
+        ComponentTotalMolecularDiffFlux %molecular diffusion flux of each component      
+        ComponentPhaseMolecularDiffFlux %molecular diffusion flux of each component, in each phase
         ComponentPhaseDensity   % Density of component in connecting cells
         PressureGradient        % Discrete pressure gradient into well bore
         WellIndex               % Well connection factor / well index
@@ -20,6 +22,11 @@ classdef FacilityFlowDiscretization < StateFunctionGrouping
             ctf.label = 'Q_i';
             group = group.setStateFunction('ComponentTotalFlux', ctf);
             group = group.setStateFunction('ComponentPhaseFlux', WellComponentPhaseFlux(model));
+            
+            group = group.setStateFunction('ComponentTotalMolecularDiffFlux', ComponentTotalMolecularDiffFlux(model));%SDS modif
+            group = group.setStateFunction('ComponentPhaseMolecularDiffFlux', ComponentPhaseMolecularDiffFlux(model));%SDS modif
+                    
+            
             group = group.setStateFunction('PressureGradient', PerforationPressureGradient(model));
             group = group.setStateFunction('WellIndex', WellIndex(model));
             group = group.setStateFunction('FacilityWellMapping', FacilityWellMapping(model));

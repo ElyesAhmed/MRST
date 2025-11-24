@@ -1,27 +1,27 @@
-classdef ComponentTotalFlux < StateFunction
-    % Total flux of all components, summed up over all phases
+classdef ComponentTotalMolecularDiffFlux < StateFunction
+    % Total molecular diffusion  flux of all components, summed up over all phases
     properties
 
     end
     
     methods
-        function gp = ComponentTotalFlux(varargin)
+        function gp = ComponentTotalMolecularDiffFlux(varargin)
             gp@StateFunction(varargin{:});
-            gp = gp.dependsOn('ComponentPhaseFlux');
-            gp.label = 'V_i';
+            gp = gp.dependsOn('ComponentPhaseMolecularDiffFlux');
+            gp.label = 'Jmoldiff_i';
         end
         
         function v = evaluateOnDomain(prop, model, state)
             ncomp = model.getNumberOfComponents();
             nph = model.getNumberOfPhases();
             v = cell(ncomp, 1);
-            phase_flux = prop.getEvaluatedDependencies(state, 'ComponentPhaseFlux');
+            Jmoldiff = prop.getEvaluatedDependencies(state, 'ComponentPhaseMolecularDiffFlux');
             
             for c = 1:ncomp
                 % Loop over phases where the component may be present
                 for ph = 1:nph
                     % Check if present
-                    m = phase_flux{c, ph};
+                    m = Jmoldiff{c, ph};
                     if ~isempty(m)
                         if isempty(v{c})
                             v{c} = m;
