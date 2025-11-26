@@ -34,28 +34,30 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         % Compositional fluid mixture
         compFluid
 
-        % Physical quantities and bounds
-        Y_H2 = 3.90875e11;               % 1/mole(H2)
-        gammak   = [];                    % Stoichiometric coefficients
-        alphaH2  = 3.6e-7;
-        alphaCO2 = 1.98e-6;
+        %parameters for biochemical reactions
+        biochemFluid
 
-        Psigrowthmax = 1.338e-4;         % 1/s
-        b_bact       = 2.35148e-6;       % 1/s
-        nbactMax     = 1e9;              % 1/m^3
+        % Physical quantities and bounds
+        %Y_H2 = 3.90875e11;               % 1/mole(H2)
+        gammak   = [];                    % Stoichiometric coefficients
+        %alphaH2  = 3.6e-7;
+        %alphaCO2 = 1.98e-6;
+
+        %Psigrowthmax = 1.338e-4;         % 1/s
+        %b_bact       = 2.35148e-6;       % 1/s
+        %nbactMax     = 1e9;              % 1/m^3
 
         bacteriamodel = true;
-        metabolicReaction = 'MethanogenicArchae';
+        %metabolicReaction = 'MethanogenicArchae';
 
         %Molecular diffusion
         moleculardiffusion = false;
-        %mol_diff = [];
-        %param_LJ=[];
+       
     end
 
     methods
         %-----------------------------------------------------------------%
-        function model = BiochemistryModel(G, rock, fluid, compFluid, includeWater, backend, varargin)
+        function model = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, includeWater, backend, varargin)
             % Constructor
             model = model@GenericOverallCompositionModel(G, rock, fluid, compFluid, ...
                 'water', includeWater, 'AutoDiffBackend', backend);
@@ -71,103 +73,40 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             end
 
 
-            %Molecular diffusion
-            %% Molecular diffusion : binary diffusion coefficients, LJ parameters SDS
-            %namecp = compFluid.names();
-            % if model.moleculardiffusion
-            %     indices = struct('H2', find(strcmp(namecp, 'H2')), ...
-            %         'C1', find(strcmp(namecp, 'C1')), ...
-            %         'CO2', find(strcmp(namecp, 'CO2')), ...
-            %         'H2O', find(strcmp(namecp, 'H2O')), ...
-            %         'N2', find(strcmp(namecp, 'N2')), ...
-            %         'C2', find(strcmp(namecp, 'C2')), ...
-            %         'C3', find(strcmp(namecp, 'C3')), ...
-            %         'H2S', find(strcmp(namecp, 'H2S')), ...
-            %         'NC4', find(strcmp(namecp, 'NC4')));
-            % 
-            %     fields = fieldnames(indices);
-            %     nfields=numel(fields);
-            %     model.mol_diff=zeros(nfields,2);
-            % 
-            % 
-            %     %At  25 degrees Celsius: coef dans l'eau douce (coef not used in gas)
-            %     %Attention: salinity reduces coef from 10 to 30 %
-            %     % coeffs = struct(...
-            %     %     'H2',  [4.5e-9, 6.1e-5], ...
-            %     %     'C1', [1.5e-9, 1.6e-5], ...
-            %     %     'H2O', [2.3e-9, 1.5e-5], ...
-            %     %     'CO2', [1.9e-9, 1.4e-5], ...
-            %     %     'N2',  [2.0e-9, 1.8e-5], ...
-            %     %     'C2',  [1.2e-9, 2.5e-5], ...
-            %     %     'C3',  [1.0e-9, 2.2e-5], ...
-            %     %     'H2S',  [1.5e-9, 2.2e-5], ...
-            %     %     'NC4', [0.8e-9, 1.9e-5]);
-            % 
-            %     %At  40 degrees Celsius: coef dans l'eau douce (coef not used in gas)
-            %     %Attention: salinity reduces coef from 10 to 30 %
-            %     coeffs = struct(...
-            %         'H2',  [6.44e-9, 6.1e-5], ...
-            %         'C1', [2.15e-9, 1.6e-5], ...
-            %         'H2O', [3.29e-9, 1.5e-5], ...
-            %         'CO2', [2.72e-9, 1.4e-5], ...
-            %         'N2',  [2.86e-9, 1.8e-5], ...
-            %         'C2',  [1.72e-9, 2.5e-5], ...
-            %         'C3',  [1.43e-9, 2.2e-5], ...
-            %         'H2S',  [2.15e-9, 2.2e-5], ...
-            %         'NC4', [1.15e-9, 1.9e-5]);
-            % 
-            % 
-            %     coeffs_LJ=struct(... %paramètres de Lennard-Jones (diametre moyen (Angstrom), potentiel(K))
-            %         'H2',  [2.92,59.7], ...
-            %         'C1',  [3.758,148.6], ...
-            %         'H2O',  [2.641,809.1], ...
-            %         'CO2',  [3.996,195.2], ...
-            %         'N2',   [3.798,71.4], ...
-            %         'C2',   [4.443,215.7], ...
-            %         'C3',   [5.118,237.1], ...
-            %         'H2S',   [3.60,301.0], ...
-            %         'NC4', [5.206,289.5]);
-            % 
-            %     for i = 1:nfields
-            %         comp = fields{i};
-            %         indComp = indices.(comp);
-            % 
-            %         if ~isempty(indComp) && isfield(coeffs, comp)
-            %             model.mol_diff(indices.(comp),:)= coeffs.(comp);
-            %             model.param_LJ(indices.(comp),:)=coeffs_LJ.(comp);
-            %         end
-            %     end
-            % end
+            %% Set metabolic reactions
+            if isempty(biochemFluid)
+                biochemFluid=TableBioChemMixture({'MethanogenicArchae'});
+            end
+            model.biochemFluid=biochemFluid;
 
 
             %% Set compositional fluid and EOS
             if isempty(compFluid)
-                if strcmp(model.metabolicReaction, 'MethanogenicArchae')
+                if strcmp(model.biochemFluid.metabolicReaction, 'MethanogenicArchae')
                     compNames = {'Hydrogen', 'Water', 'Nitrogen', 'CarbonDioxide', 'Methane'};
                     compSymbols = {'H2', 'H2O', 'N2', 'CO2', 'C1'};
                     compFluid = TableCompositionalMixture(compNames, compSymbols);
-                    model.gammak = [-4.0, 2.0, 0.0, -1.0, 1.0];  % Stoichiometric coefficients
-                    model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
                 else
                     warning('MethanogenicArchae is the default; other reactions not implemented.');
                 end
-            else
-                ncomp = compFluid.getNumberOfComponents();
-                model.gammak = zeros(1, ncomp);
-                if strcmp(model.metabolicReaction, 'MethanogenicArchae')
-                    namecp = compFluid.names;
-                    indH2   = find(strcmp(namecp, 'H2'));
-                    indH2O  = find(strcmp(namecp, 'H2O'));
-                    indCO2  = find(strcmp(namecp, 'CO2'));
-                    indC1   = find(strcmp(namecp, 'C1'));
-                    model.gammak(indH2)  = -4.0;
-                    model.gammak(indH2O) =  2.0;
-                    model.gammak(indCO2) = -1.0;
-                    model.gammak(indC1)  =  1.0;
-                end
-                model.compFluid = compFluid;
-                model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
             end
+            model.compFluid = compFluid;
+            model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
+
+            ncomp = compFluid.getNumberOfComponents();
+            model.gammak = zeros(1, ncomp);
+            namecp = compFluid.names;
+            if strcmp(model.biochemFluid.metabolicReaction, 'MethanogenicArchae')                
+                indH2   = find(strcmp(namecp, model.biochemFluid.rH2));
+                indH2O  = find(strcmp(namecp, model.biochemFluid.pH20));
+                indCO2  = find(strcmp(namecp, model.biochemFluid.rsub));
+                indC1   = find(strcmp(namecp, model.biochemFluid.p2));
+                model.gammak(indH2)  = -4.0;
+                model.gammak(indH2O) =  2.0;
+                model.gammak(indCO2) = -1.0;
+                model.gammak(indC1)  =  1.0;
+            end
+
 
             % Validate bacterial formulation
             assert(any(strcmpi(model.bacterialFormulation, {'bacterialmodel'})), ...

@@ -52,16 +52,20 @@ classdef BactConvertionRate < StateFunction
             if ~(rm.bacteriamodel && rm.liquidPhase)
                 return;
             end
+            bcrm=rm.biochemFluid;
 
             % Get component indices
             compNames = rm.EOSModel.getComponentNames();
-            idxH2  = find(strcmpi(compNames, 'H2'));
-            idxCO2 = find(strcmpi(compNames, 'CO2'));
+            idxH2  = find(strcmpi(compNames, bcrm.rH2));
+            idxsub = find(strcmpi(compNames, bcrm.rsub));
+            idxCO2 = find(strcmpi(compNames, 'CO2'), 1); 
 
             % Validate required components
-            if isempty(idxH2) || isempty(idxCO2)
-                warning('Bacterial model requires H2 and CO2 components');
-                return;
+            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+                if isempty(idxH2) || isempty(idxCO2)
+                    warning('Bacterial model requires H2 and CO2 components');
+                    return;
+                end
             end
 
             try
@@ -75,11 +79,11 @@ classdef BactConvertionRate < StateFunction
                 % Extract liquid phase properties
                 if iscell(x)
                     xH2 = x{idxH2};
-                    xCO2 = x{idxCO2};
+                    xCO2 = x{idxsub};
                     sL = s{L_ix};
                 else
                     xH2 = x(:, idxH2);
-                    xCO2 = x(:, idxCO2);
+                    xCO2 = x(:, idxsub);
                     sL = s(:, L_ix);
                 end
 
@@ -87,12 +91,12 @@ classdef BactConvertionRate < StateFunction
                 sL = max(value(sL), 1.0e-8);
 
                 % Get model parameters
-                alphaH2 = rm.alphaH2;
-                alphaCO2 = rm.alphaCO2;
-                Psigrowthmax = rm.Psigrowthmax;
-                Y_H2 = rm.Y_H2;
+                alphaH2 = bcrm.alphaH2;
+                alphaCO2 = bcrm.alphasub;
+                Psigrowthmax = bcrm.Psigrowthmax;
+                Y_H2 = bcrm.Y_H2;
                 gammak = rm.gammak;
-                nbactMax = rm.nbactMax;
+                nbactMax = bcrm.nbactMax;
                 mc = rm.EOSModel.CompositionalMixture.molarMass;
 
                 % Calculate growth rate using Monod kinetics

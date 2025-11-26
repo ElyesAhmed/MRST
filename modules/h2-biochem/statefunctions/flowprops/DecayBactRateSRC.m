@@ -58,8 +58,9 @@ classdef DecayBactRateSRC < StateFunction
 
             % Get model parameters
             rm = model.ReservoirModel;
-            bbact = rm.b_bact;
-            nbMax = rm.nbactMax;
+            bcrm=rm.biochemFluid;
+            bbact = bcrm.b_bact;
+            nbMax = bcrm.nbactMax;
 
             % Check if bacterial modeling is active
             if ~(rm.bacteriamodel && rm.liquidPhase)
@@ -68,12 +69,14 @@ classdef DecayBactRateSRC < StateFunction
 
             % Get component names and indices
             namecp = rm.getComponentNames();
-            idx_H2 = find(strcmpi(namecp, 'H2'), 1);
+            idx_H2 = find(strcmpi(namecp, bcrm.rH2), 1);
             idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
 
             % Validate required components
-            if isempty(idx_H2) || isempty(idx_CO2)
-                return;
+            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+                if isempty(idx_H2) || isempty(idx_CO2)
+                    return;
+                end
             end
 
             % Get required state variables
