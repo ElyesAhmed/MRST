@@ -30,7 +30,7 @@ mrstModule add h2-biochem compositional ad-blackoil ad-core ad-props mrst-gui
 gravity reset on
 
 %% ============ Grid and Rock Properties =====================
-[nx, ny, nz] = deal(15, 15, 8);
+[nx, ny, nz] = deal(31, 31, 8);
 [Lx, Ly, Lz] = deal(1525, 1525, 50);
 
 G = cartGrid([nx, ny, nz], [Lx, Ly, Lz]);
@@ -93,7 +93,7 @@ W = verticalWell(W, G, rock, n1, n2, 1, ...
 W(end).components = [0.0, 0.95, 0.05, 0.0];
 
 %% Time Schedule
-ncycles    = 1; 
+ncycles    = 6; 
 deltaT     = 5*day;
 nbj_buildUp = 60*day; nbj_rest = 20*day;
 nbj_inject  = 30*day; nbj_idle = 20*day;
@@ -132,7 +132,7 @@ lsolve = selectLinearSolverAD(model_nobact);
 nls = NonLinearSolver(); nls.LinearSolver = lsolve;
 
 problem_nobact = packSimulationProblem(state0_nobact, model_nobact, schedule, ...
-    'Benchmark_NoBacteria2', 'NonLinearSolver', nls);
+    'Benchmark_NoBacteria', 'NonLinearSolver', nls);
 simulatePackedProblem(problem_nobact);
 [ws_nobact, states_nobact] = getPackedSimulatorOutput(problem_nobact);
 results_nobact = postProcessResults(states_nobact, ws_nobact, model_nobact, 'nobact');
@@ -152,7 +152,7 @@ lsolve = selectLinearSolverAD(model_bact);
 nls.LinearSolver = lsolve;
 
 problem_bact = packSimulationProblem(state0_bact, model_bact, schedule, ...
-    'Benchmark_Bacteria2', 'NonLinearSolver', nls);
+    'Benchmark_Bacteria', 'NonLinearSolver', nls);
 simulatePackedProblem(problem_bact);
 [ws_bact, states_bact] = getPackedSimulatorOutput(problem_bact);
 results_bact = postProcessResults(states_bact, ws_bact, model_bact, 'bact');

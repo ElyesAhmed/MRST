@@ -58,6 +58,7 @@ properties
     PVTPropertyFunctions % Grouping for PVT properties
     FlowDiscretization % Grouping for flux discretization
     Components = {};
+    moleculardiffusion = false;%Molecular diffusion
 end
 
 methods

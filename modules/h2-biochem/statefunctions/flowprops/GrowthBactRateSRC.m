@@ -6,7 +6,9 @@ classdef GrowthBactRateSRC < StateFunction
     %
     % DESCRIPTION:
     %   Computes the bacterial growth rate in each grid cell based on:
-    %   - H2 and CO2 concentrations (Monod kinetics)
+    %   - H2 and CO2 concentrations (Monod kinetics) for Methacenic archae
+    %   - H2 and SO4(2-) concentrations (Monod kinetics) for Sulfate
+    %   reducing bacteria
     %   - Bacterial population density
     %   - Liquid phase saturation and density
     %   - Pore volume
@@ -63,8 +65,7 @@ classdef GrowthBactRateSRC < StateFunction
             namecp = rm.getComponentNames();
             idx_H2 = find(strcmpi(namecp, bcrm.rH2), 1);     % Case-insensitive search
             idx_sub = find(strcmpi(namecp, bcrm.rsub), 1);   % Case-insensitive search
-            idx_CO2 = find(strcmpi(namecp, 'CO2'), 1); 
-
+            
             % Check if bacterial modeling is active and components exist
            %if ~(rm.bacteriamodel && rm.liquidPhase && ~isempty(idx_H2) && ~isempty(idx_sub))
             %    return;
@@ -74,11 +75,17 @@ classdef GrowthBactRateSRC < StateFunction
                 return;
             end
             if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+                idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
                 if ~(~isempty(idx_H2) && ~isempty(idx_CO2))
                     return;
                 end
             end
-
+            if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
+                idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
+                if ~(~isempty(idx_H2) && ~isempty(idx_SO4))
+                    return;
+                end
+            end
             % Get required properties
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');
             rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');
@@ -90,12 +97,12 @@ classdef GrowthBactRateSRC < StateFunction
             % Extract liquid phase properties
             if iscell(x)
                 xH2 = x{idx_H2};
-                xCO2 = x{idx_sub};
+                xsub = x{idx_sub};
                 sL = s{L_ix};
                 rhoL = rho{L_ix};
             else
                 xH2 = x(:, idx_H2);
-                xCO2 = x(:, idx_sub);
+                xsub = x(:, idx_sub);
                 sL = s(:, L_ix);
                 rhoL = rho(:, L_ix);
             end
@@ -110,15 +117,15 @@ classdef GrowthBactRateSRC < StateFunction
 
             % Get growth parameters
             alphaH2 = bcrm.alphaH2;
-            alphaCO2 = bcrm.alphasub;
+            alphasub = bcrm.alphasub;
             Psigrowthmax = bcrm.Psigrowthmax;
 
             % Calculate Monod terms for H2 and CO2
             axH2 = xH2 ./ (alphaH2 + xH2);
-            axCO2 = xCO2 ./ (alphaCO2 + xCO2);
+            axsub = xsub ./ (alphasub + xsub);
 
             % Compute growth rate
-            Psigrowth = pv .* Psigrowthmax .* axH2 .* axCO2 .* nbact .* Voln;
+            Psigrowth = pv .* Psigrowthmax .* axH2 .* axsub .* nbact .* Voln;
         end
     end
 end

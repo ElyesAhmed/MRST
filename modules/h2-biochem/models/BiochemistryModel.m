@@ -30,6 +30,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         % Bio-chemical flags
         bactrial = true;                  % Enable biochemical effects (debug)
         bacterialFormulation = 'bacterialmodel';
+        bacteriamodel = true;
 
         % Compositional fluid mixture
         compFluid
@@ -38,21 +39,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         biochemFluid
 
         % Physical quantities and bounds
-        %Y_H2 = 3.90875e11;               % 1/mole(H2)
-        gammak   = [];                    % Stoichiometric coefficients
-        %alphaH2  = 3.6e-7;
-        %alphaCO2 = 1.98e-6;
-
-        %Psigrowthmax = 1.338e-4;         % 1/s
-        %b_bact       = 2.35148e-6;       % 1/s
-        %nbactMax     = 1e9;              % 1/m^3
-
-        bacteriamodel = true;
-        %metabolicReaction = 'MethanogenicArchae';
-
-        %Molecular diffusion
-        moleculardiffusion = false;
-       
+        gammak   = [];                    % Stoichiometric coefficients       
     end
 
     methods

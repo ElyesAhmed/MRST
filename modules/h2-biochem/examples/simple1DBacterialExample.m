@@ -67,6 +67,9 @@ initComp  = [0.90, 0.045, 0.005, 0.05];
 initTemp  = 273.15 + 40;   % Absolute temperature [K]
 initPress = 82*barsa;      % Pressure [Pa]
 
+% Metabolic reaction
+biochemFluid = TableBioChemMixture({'MethanogenicArchae'});
+
 %% Bio-clogging model
 initBact  = 9;             % Normalized bacteria concentration
 nc = 180; % critical bacteria concentration
@@ -79,8 +82,8 @@ compFluid = TableCompositionalMixture( ...
     {'H2O','H2','C1','CO2'});
 
 backend = DiagonalAutoDiffBackend('modifyOperators', true);
-model   = BiochemistryModel(model.G, model.rock, model.fluid, compFluid, ...
-    true, backend, 'water', false, 'oil', true, 'gas', true, ...
+model   = BiochemistryModel(model.G, model.rock, model.fluid, compFluid,...
+    biochemFluid, true, backend, 'water', false, 'oil', true, 'gas', true, ...
     'bacteriamodel', true, 'liquidPhase','O','vaporPhase','G');
 
 %% Shut Wells
