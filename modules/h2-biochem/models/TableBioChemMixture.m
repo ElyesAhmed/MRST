@@ -4,11 +4,11 @@ classdef TableBioChemMixture
         metabolicReaction % name of bioreactions :'MethanogenicArchae','SulfateReducingBacteria'
         rH2 %  Names of bioreactions reactants
         rsub
-        pH20%  Names of bioreactions products
+        pH2O%  Names of bioreactions products
         p2
         gamrH2 %  Associated Stoichiometric coefficients
         gamrsub
-        gampH20
+        gampH2O
         gamp2
         Y_H2 %  Yield coefficient
         alphaH2 %  Half-saturation constant for H2
@@ -36,8 +36,8 @@ classdef TableBioChemMixture
             end
 
             nbioreact = numel(metabolicReactions);
-            [metabolicReaction,rH2,rsub,pH20,p2]=deal(strings(1,nbioreact));
-            [gamrH2,gamrsub,gampH20,gamp2,Y_H2,alphaH2,alphasub,...
+            [metabolicReaction,rH2,rsub,pH2O,p2]=deal(strings(1,nbioreact));
+            [gamrH2,gamrsub,gampH2O,gamp2,Y_H2,alphaH2,alphasub,...
                 Psigrowthmax,b_bact,nbactMax] = deal(zeros(1, nbioreact));
 
 
@@ -58,11 +58,11 @@ classdef TableBioChemMixture
                 metabolicReaction(i)=str.metabolicReaction;
                 rH2(i)=str.rH2;
                 rsub(i)=str.rsub;
-                pH20(i)=str.pH20;
+                pH2O(i)=str.pH2O;
                 p2(i)=str.p2;
                 gamrH2(i) = str.gamrH2;
                 gamrsub(i) = str.gamrsub;
-                gampH20(i) = str.gampH20;
+                gampH2O(i) = str.gampH2O;
                 gamp2(i) = str.gamp2;
                 Y_H2(i) = str.Y_H2;
                 alphaH2(i) = str.alphaH2;
@@ -77,11 +77,11 @@ classdef TableBioChemMixture
             biochemmix.metabolicReaction=metabolicReaction;
             biochemmix.rH2=rH2 ;
             biochemmix.rsub=rsub;
-            biochemmix.pH20=pH20;
+            biochemmix.pH2O=pH2O;
             biochemmix.p2=p2;
             biochemmix.gamrH2=gamrH2;
             biochemmix.gamrsub=gamrsub;
-            biochemmix.gampH20=gampH20;
+            biochemmix.gampH2O=gampH2O;
             biochemmix.gamp2=gamp2;
             biochemmix.Y_H2=Y_H2;
             biochemmix.alphaH2=alphaH2;

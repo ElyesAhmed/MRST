@@ -72,18 +72,19 @@ classdef DecayBactRateSRC < StateFunction
             idx_H2 = find(strcmpi(namecp, bcrm.rH2), 1);
             
             % Validate required components
-            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae') || ...
+                    strcmp(bcrm.metabolicReaction, 'AcetogenicBacteria')
                 idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
                 if isempty(idx_H2) || isempty(idx_CO2)
                     return;
                 end
             end
-            if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
-                idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
-                if isempty(idx_H2) || isempty(idx_SO4)
-                    return;
-                end
-            end
+            % if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
+            %     idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
+            %     if isempty(idx_H2) || isempty(idx_SO4)
+            %         return;
+            %     end
+            % end
 
             % Get required state variables
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');

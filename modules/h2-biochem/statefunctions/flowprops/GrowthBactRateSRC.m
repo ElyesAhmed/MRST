@@ -74,18 +74,19 @@ classdef GrowthBactRateSRC < StateFunction
             if ~(rm.bacteriamodel && rm.liquidPhase)
                 return;
             end
-            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae') || ...
+                    strcmp(bcrm.metabolicReaction, 'AcetogenicBacteria')
                 idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
                 if ~(~isempty(idx_H2) && ~isempty(idx_CO2))
                     return;
                 end
             end
-            if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
-                idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
-                if ~(~isempty(idx_H2) && ~isempty(idx_SO4))
-                    return;
-                end
-            end
+            % if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
+            %     idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
+            %     if ~(~isempty(idx_H2) && ~isempty(idx_SO4))
+            %         return;
+            %     end
+            % end
             % Get required properties
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');
             rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');

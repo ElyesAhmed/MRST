@@ -61,20 +61,21 @@ classdef BactConvertionRate < StateFunction
             
 
             % Validate required components
-            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae')
+            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae') || ...
+                    strcmp(bcrm.metabolicReaction, 'AcetogenicBacteria')
                 idxCO2 = find(strcmpi(compNames, 'CO2'), 1);
                 if isempty(idxH2) || isempty(idxCO2)
                     warning('Bacterial model requires H2 and CO2 components');
                     return;
                 end
             end
-            if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
-                idxSO4 = find(strcmpi(compNames, 'SO4'), 1);
-                if isempty(idxH2) || isempty(idxSO4)
-                    warning('Bacterial model requires H2 and SO4(2-) components');
-                    return;
-                end
-            end
+            % if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
+            %     idxSO4 = find(strcmpi(compNames, 'SO4'), 1);
+            %     if isempty(idxH2) || isempty(idxSO4)
+            %         warning('Bacterial model requires H2 and SO4(2-) components');
+            %         return;
+            %     end
+            % end
             try
                 % Get required state variables
                 pv = rm.PVTPropertyFunctions.get(model.ReservoirModel, state, 'PoreVolume');
