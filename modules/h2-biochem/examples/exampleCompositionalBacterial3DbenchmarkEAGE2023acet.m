@@ -96,7 +96,7 @@ W = verticalWell(W, G, rock, n1, n2, 1, ...
 W(end).components = [0.0, 0.95, 0.05, 0.0, 0.0];
 
 %% Time Schedule
-ncycles    = 1; 
+ncycles    = 6; 
 deltaT     = 5*day;
 nbj_buildUp = 60*day; nbj_rest = 20*day;
 nbj_inject  = 30*day; nbj_idle = 20*day;
@@ -136,7 +136,7 @@ nls = NonLinearSolver(); nls.LinearSolver = lsolve;
 
 problem_nobact = packSimulationProblem(state0_nobact, model_nobact, schedule, ...
     'Benchmark_NoBacteria_15_acet11', 'NonLinearSolver', nls);
-simulatePackedProblem(problem_nobact, 'restartStep',1);
+simulatePackedProblem(problem_nobact); %, 'restartStep',1);
 [ws_nobact, states_nobact] = getPackedSimulatorOutput(problem_nobact);
 results_nobact = postProcessResults(states_nobact, ws_nobact, model_nobact, 'nobact');
 
@@ -148,7 +148,7 @@ model_bact = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, true, ba
 model_bact.outputFluxes = false;
 model_bact.EOSModel = compEOS;
 
-nbact0 = 1; model_bact.biochemFluid.nbactMax = 1e4;
+nbact0 = 1; model_bact.biochemFluid.nbactMax = 1e8;
 state0_bact = initCompositionalStateBacteria(model_bact, P0, T0, s0, z0, nbact0, compEOS);
 
 lsolve = selectLinearSolverAD(model_bact);
@@ -173,13 +173,13 @@ fprintf('H2 Production Efficiency (With bacteria): %.2f%%\n', eff_bact);
 H2_loss = (abs(results_nobact.totMassH2 - results_bact.totMassH2) ./ results_nobact.totMassH2) * 100;
 CO2_loss = (abs(results_nobact.totMassCO2 - results_bact.totMassCO2) ./ results_nobact.totMassCO2) * 100;
 C1_gain  = (abs(results_nobact.totMassC1 - results_bact.totMassC1) ./ results_nobact.totMassC1) * 100;
-CH3COOH_gain  = (abs(results_nobact.totMassCH3COOH - results_bact.totMassCH3COOH)...
-    ./ results_nobact.totMassCH3COOH) * 100;
+%CH3COOH_gain  = (abs(results_nobact.totMassCH3COOH - results_bact.totMassCH3COOH)...
+ %   ./ results_bact.totMassCH3COOH) * 100;
 
 fprintf('Total H2 loss due to bacteria: %.2f%%\n', H2_loss(end));
 fprintf('Total CO2 loss due to bacteria: %.2f%%\n', CO2_loss(end));
 fprintf('Total C1 gain due to bacteria:  %.2f%%\n', C1_gain(end));
-fprintf('Total C1 gain due to bacteria:  %.2f%%\n', CH3COOH_gain(end));
+%fprintf('Total CH3COOH production due to bacteria:  %.2f%%\n', CH3COOH_gain(end));
 
 %% --- Plot Benchmark Results ---
 nT=numel(states_nobact);
@@ -200,15 +200,15 @@ legend({'CH3COOH total mass, no archae','CH3COOH total mass, archae'},...
 nT=numel(states_nobact);
 f20=figure('Name','results_nobact.totMassCH3COOH','NumberTitle','off');
 f20.Position(3:4) = [900 700];
-plot(1:nT,results_nobact.yC1,'b','MarkerSize',7,'LineWidth',2)
+plot(1:nT,results_bact.xH2,'b','MarkerSize',7,'LineWidth',2)
 hold on;
-plot(1:nT,results_nobact.yCH3COOH,'r--','MarkerSize',7,'LineWidth',2)
+plot(1:nT,results_bact.yH2,'r--','MarkerSize',7,'LineWidth',2)
 title(' CH3COOH x over time, no salt','FontSize',16,'FontWeight','bold','Color','k')
 xlabel({'time (days)'},'FontWeight','bold','Color','k')
 ylabel({'CH3COOH x'},'FontWeight','bold','Color','k')
 ax = gca;
 ax.FontSize = 16;
-legend({'CH3COOH total mass, no archae','CH3COOH total mass, archae'},...
+legend({'CH3COOH total mass in liquid phase','CH3COOH total mass, gas phase'},...
     'FontSize',16,'TextColor','black','Location','west')
 
 
