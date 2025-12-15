@@ -41,9 +41,12 @@ perm = [100, 100, 10] .* milli*darcy;
 rock = makeRock(G, perm, 0.2);
 
 %% Fluid Properties
-compFluid = TableCompositionalMixture({'Water', 'Hydrogen', 'CarbonDioxide', 'Methane'}, ...
-                                      {'H2O', 'H2', 'CO2', 'C1'});
-biochemFluid = TableBioChemMixture({'MethanogenicArchae'});
+%compFluid = TableCompositionalMixture({'Water', 'Hydrogen', 'CarbonDioxide', 'Methane'}, ...
+%                                      {'H2O', 'H2', 'CO2', 'C1'});
+compFluid = TableCompositionalMixture({'Water', 'Hydrogen', 'CarbonDioxide', 'Methane', 'AceticAcid'}, ...
+                                      {'H2O', 'H2', 'CO2', 'C1', 'CH3COOH'});
+%biochemFluid = TableBioChemMixture({'MethanogenicArchae'});
+biochemFluid = TableBioChemMixture({'AcetogenicBacteria'});
 
 [rhow, rhog]   = deal(999.7 * kilogram/meter^3, 1.2243 * kilogram/meter^3);
 [viscow, viscog] = deal(1.3059 * centi*poise, 0.01763 * centi*poise);
@@ -72,28 +75,28 @@ n2 = floor(0.5*ny) + 1;
 W = verticalWell(W, G, rock, n1, n2, 1, ...
     'comp_i', [0, 1], 'Radius', 0.5, 'name', 'Injector', ...
     'type', 'rate', 'Val', 1e6*meter^3/day, 'sign', 1);
-W(end).components = [0.0, 0.6, 0.4, 0.0];
+W(end).components = [0.0, 0.6, 0.4, 0.0, 0.0];
 
 % Rest (shut-in)
 W = verticalWell(W, G, rock, n1, n2, 1, ...
     'compi', [0, 1], 'Radius', 0.5, 'name', 'Rest', ...
     'type', 'rate', 'Val', 0.0, 'sign', 1);
-W(end).components = [0.0, 0.95, 0.05, 0.0];
+W(end).components = [0.0, 0.95, 0.05, 0.0, 0.0];
 
 % Injector (H2-rich)
 W = verticalWell(W, G, rock, n1, n2, 1, ...
     'comp_i', [0, 1], 'Radius', 0.5, 'name', 'InjectorH2', ...
     'type', 'rate', 'Val', 1e6*meter^3/day, 'sign', 1);
-W(end).components = [0.0, 0.95, 0.05, 0.0];
+W(end).components = [0.0, 0.95, 0.05, 0.0, 0.0];
 
 % Producer
 W = verticalWell(W, G, rock, n1, n2, 1, ...
     'compi', [0, 1], 'Radius', 0.5, 'name', 'Producer', ...
     'type', 'rate', 'Val', -1e6*meter^3/day, 'sign', -1);
-W(end).components = [0.0, 0.95, 0.05, 0.0];
+W(end).components = [0.0, 0.95, 0.05, 0.0, 0.0];
 
 %% Time Schedule
-ncycles    = 6; 
+ncycles    = 1; 
 deltaT     = 5*day;
 nbj_buildUp = 60*day; nbj_rest = 20*day;
 nbj_inject  = 30*day; nbj_idle = 20*day;
@@ -114,7 +117,7 @@ backend = DiagonalAutoDiffBackend('modifyOperators', true);
 %% Initial State
 T0 = 40 + 273.15;
 s0 = [0.2, 0.8];
-z0 = [0.7, 0.0, 0.02, 0.28];
+z0 = [0.7, 0.0, 0.02, 0.28, 0.0];
 
 %% --- Simulation 1: Without bacteria ---
 arg = {G, rock, fluid, compFluid, biochemFluid, true, backend, ...
@@ -132,8 +135,8 @@ lsolve = selectLinearSolverAD(model_nobact);
 nls = NonLinearSolver(); nls.LinearSolver = lsolve;
 
 problem_nobact = packSimulationProblem(state0_nobact, model_nobact, schedule, ...
-    'Benchmark_NoBacteria_15_nodiff', 'NonLinearSolver', nls);
-simulatePackedProblem(problem_nobact);
+    'Benchmark_NoBacteria_15_acet11', 'NonLinearSolver', nls);
+simulatePackedProblem(problem_nobact, 'restartStep',1);
 [ws_nobact, states_nobact] = getPackedSimulatorOutput(problem_nobact);
 results_nobact = postProcessResults(states_nobact, ws_nobact, model_nobact, 'nobact');
 
@@ -145,15 +148,15 @@ model_bact = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, true, ba
 model_bact.outputFluxes = false;
 model_bact.EOSModel = compEOS;
 
-nbact0 = 1; model_bact.biochemFluid.nbactMax = 1e8;
+nbact0 = 1; model_bact.biochemFluid.nbactMax = 1e4;
 state0_bact = initCompositionalStateBacteria(model_bact, P0, T0, s0, z0, nbact0, compEOS);
 
 lsolve = selectLinearSolverAD(model_bact);
 nls.LinearSolver = lsolve;
 
 problem_bact = packSimulationProblem(state0_bact, model_bact, schedule, ...
-    'Benchmark_Bacteria_15nodiff', 'NonLinearSolver', nls);
-simulatePackedProblem(problem_bact);
+    'Benchmark_Bacteriatace_15_acet44', 'NonLinearSolver', nls);
+simulatePackedProblem(problem_bact, 'restartStep',1);
 [ws_bact, states_bact] = getPackedSimulatorOutput(problem_bact);
 results_bact = postProcessResults(states_bact, ws_bact, model_bact, 'bact');
 
@@ -170,12 +173,46 @@ fprintf('H2 Production Efficiency (With bacteria): %.2f%%\n', eff_bact);
 H2_loss = (abs(results_nobact.totMassH2 - results_bact.totMassH2) ./ results_nobact.totMassH2) * 100;
 CO2_loss = (abs(results_nobact.totMassCO2 - results_bact.totMassCO2) ./ results_nobact.totMassCO2) * 100;
 C1_gain  = (abs(results_nobact.totMassC1 - results_bact.totMassC1) ./ results_nobact.totMassC1) * 100;
+CH3COOH_gain  = (abs(results_nobact.totMassCH3COOH - results_bact.totMassCH3COOH)...
+    ./ results_nobact.totMassCH3COOH) * 100;
 
 fprintf('Total H2 loss due to bacteria: %.2f%%\n', H2_loss(end));
 fprintf('Total CO2 loss due to bacteria: %.2f%%\n', CO2_loss(end));
 fprintf('Total C1 gain due to bacteria:  %.2f%%\n', C1_gain(end));
+fprintf('Total C1 gain due to bacteria:  %.2f%%\n', CH3COOH_gain(end));
 
 %% --- Plot Benchmark Results ---
+nT=numel(states_nobact);
+f20=figure('Name','results_nobact.totMassCH3COOH','NumberTitle','off');
+f20.Position(3:4) = [900 700];
+plot(1:nT,results_nobact.totMassCH3COOH,'b','MarkerSize',7,'LineWidth',2)
+hold on;
+plot(1:nT,results_bact.totMassCH3COOH,'r--','MarkerSize',7,'LineWidth',2)
+title(' CH3COOH total mass over time, no salt','FontSize',16,'FontWeight','bold','Color','k')
+xlabel({'time (days)'},'FontWeight','bold','Color','k')
+ylabel({'CH3COOH mass (kg)'},'FontWeight','bold','Color','k')
+ax = gca;
+ax.FontSize = 16;
+legend({'CH3COOH total mass, no archae','CH3COOH total mass, archae'},...
+    'FontSize',16,'TextColor','black','Location','west')
+
+
+nT=numel(states_nobact);
+f20=figure('Name','results_nobact.totMassCH3COOH','NumberTitle','off');
+f20.Position(3:4) = [900 700];
+plot(1:nT,results_nobact.yC1,'b','MarkerSize',7,'LineWidth',2)
+hold on;
+plot(1:nT,results_nobact.yCH3COOH,'r--','MarkerSize',7,'LineWidth',2)
+title(' CH3COOH x over time, no salt','FontSize',16,'FontWeight','bold','Color','k')
+xlabel({'time (days)'},'FontWeight','bold','Color','k')
+ylabel({'CH3COOH x'},'FontWeight','bold','Color','k')
+ax = gca;
+ax.FontSize = 16;
+legend({'CH3COOH total mass, no archae','CH3COOH total mass, archae'},...
+    'FontSize',16,'TextColor','black','Location','west')
+
+
+
 plotBenchmarckAEGE2023(numel(states_nobact), ...
     results_nobact.pressure, results_bact.pressure, ...
     H2_loss, results_nobact.totMassH2, results_bact.totMassH2, ...
@@ -199,13 +236,14 @@ nT = numel(states);
 indH2 = find(strcmp(namecp, 'H2'));
 indCO2 = find(strcmp(namecp, 'CO2'));
 indC1 = find(strcmp(namecp, 'C1'));
+indCH3COOH = find(strcmp(namecp, 'CH3COOH'));
 
 % Initialize result structure
 results = struct();
-resultFields = {'xH2', 'yH2', 'xCO2', 'yCO2', 'yC1', 'pressure', ...
-    'H2_well', 'CO2_well', 'C1_well', 'totMassH2', ...
-    'totMassCO2', 'totMassC1', 'FractionMassH2', ...
-    'FractionMassCO2', 'FractionMassC1', 'totMassComp'};
+resultFields = {'xH2', 'yH2', 'xCO2', 'yCO2', 'yC1', 'xCH3COOH', 'yCH3COOH', 'pressure', ...
+    'H2_well', 'CO2_well', 'C1_well', 'CH3COOH_well', 'totMassH2', ...
+    'totMassCO2', 'totMassC1', 'totMassCH3COOH', 'FractionMassH2', ...
+    'FractionMassCO2', 'FractionMassC1', 'FractionMassCH3COOH', 'totMassComp'};
 
 for i = 1:numel(resultFields)
     results.(resultFields{i}) = zeros(nT, 1);
@@ -218,10 +256,13 @@ for i = 1:nT
     results.yC1(i) = max(states{i}.y(:, indC1));
     results.xCO2(i) = max(states{i}.x(:, indCO2));
     results.yCO2(i) = max(states{i}.y(:, indCO2));
-    results.pressure(i) = mean(states{i}.pressure(:));
+    results.xCH3COOH(i) = max(states{i}.x(:, indCH3COOH));
+    results.yCH3COOH(i) = max(states{i}.y(:, indCH3COOH));
+     results.pressure(i) = mean(states{i}.pressure(:));
     results.H2_well(i) = ws{i}.H2;
     results.CO2_well(i) = ws{i}.CO2;
     results.C1_well(i) = ws{i}.C1;
+    results.CH3COOH_well(i) = ws{i}.C1;
 
     % Calculate mass balances
     for j = 1:ncomp
@@ -232,10 +273,12 @@ for i = 1:nT
     results.totMassH2(i) = sum(states{i}.FlowProps.ComponentTotalMass{indH2});
     results.totMassCO2(i) = sum(states{i}.FlowProps.ComponentTotalMass{indCO2});
     results.totMassC1(i) = sum(states{i}.FlowProps.ComponentTotalMass{indC1});
+   results.totMassCH3COOH(i) = sum(states{i}.FlowProps.ComponentTotalMass{indCH3COOH});
 
     results.FractionMassH2(i) = results.totMassH2(i) / results.totMassComp(i);
     results.FractionMassCO2(i) = results.totMassCO2(i) / results.totMassComp(i);
     results.FractionMassC1(i) = results.totMassC1(i) / results.totMassComp(i);
+    results.FractionMassCH3COOH(i) = results.totMassCH3COOH(i) / results.totMassComp(i);
 end
 
 results.caseType = caseType;
