@@ -109,7 +109,20 @@ classdef ComponentPhaseMolecularDiffFlux < StateFunction
                EpsLJ=param_LJ(:,2);
 
                avg = model.operators.faceAvg;
-               poro= model.rock.poro;
+
+               %bioclogging
+               if model.dynamicFlowPv()
+                   if model.bacteriamodel
+                       poro=model.rock.poro(p,state.nbact);
+                   else
+                       poro=model.rock.poro(p);
+                   end
+               else
+                   poro= model.rock.poro;
+               end
+
+
+               
                L_ix = model.getLiquidIndex();
                V_ix = model.getVaporIndex();
                 

@@ -36,15 +36,21 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         compFluid
 
         %parameters for biochemical reactions
-        biochemFluid
+        Y_H2 = 3.90875e11;               % 1/mole(H2)
+        gammak   = [];                    % Stoichiometric coefficients
+        alphaH2  = 3.6e-7;
+        alphaCO2 = 1.98e-6;
 
-        % Physical quantities and bounds
-        gammak   = [];                    % Stoichiometric coefficients       
+        Psigrowthmax = 1.338e-4;         % 1/s
+        b_bact       = 2.35148e-6;       % 1/s
+        nbactMax     = 1e9;              % 1/m^3
+
+        metabolicReaction = 'MethanogenicArchae';         
     end
 
     methods
         %-----------------------------------------------------------------%
-        function model = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, includeWater, backend, varargin)
+        function model = BiochemistryModel(G, rock, fluid, compFluid, includeWater, backend, varargin)
             % Constructor
             model = model@GenericOverallCompositionModel(G, rock, fluid, compFluid, ...
                 'water', includeWater, 'AutoDiffBackend', backend);
@@ -60,38 +66,34 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             end
 
 
-            %% Set metabolic reactions
-            if isempty(biochemFluid)
-                biochemFluid=TableBioChemMixture({'MethanogenicArchae'});
-            end
-            model.biochemFluid=biochemFluid;
-
-
             %% Set compositional fluid and EOS
-            if isempty(compFluid)
-                if strcmp(model.biochemFluid.metabolicReaction, 'MethanogenicArchae')
+           if isempty(compFluid)
+                if strcmp(model.metabolicReaction, 'MethanogenicArchae')
                     compNames = {'Hydrogen', 'Water', 'Nitrogen', 'CarbonDioxide', 'Methane'};
                     compSymbols = {'H2', 'H2O', 'N2', 'CO2', 'C1'};
                     compFluid = TableCompositionalMixture(compNames, compSymbols);
+                    model.gammak = [-4.0, 2.0, 0.0, -1.0, 1.0];  % Stoichiometric coefficients
+                    model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
                 else
                     warning('MethanogenicArchae is the default; other reactions not implemented.');
                 end
+            else
+                ncomp = compFluid.getNumberOfComponents();
+                model.gammak = zeros(1, ncomp);
+                if strcmp(model.metabolicReaction, 'MethanogenicArchae')
+                    namecp = compFluid.names;
+                    indH2   = find(strcmp(namecp, 'H2'));
+                    indH2O  = find(strcmp(namecp, 'H2O'));
+                    indCO2  = find(strcmp(namecp, 'CO2'));
+                    indC1   = find(strcmp(namecp, 'C1'));
+                    model.gammak(indH2)  = -4.0;
+                    model.gammak(indH2O) =  2.0;
+                    model.gammak(indCO2) = -1.0;
+                    model.gammak(indC1)  =  1.0;
+                end
+                model.compFluid = compFluid;
+                model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
             end
-            
-            model.compFluid = compFluid;
-            model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
-            ncomp = compFluid.getNumberOfComponents();
-            model.gammak = zeros(1, ncomp);
-            namecp = compFluid.names;
-            indH2   = find(strcmp(namecp, model.biochemFluid.rH2));
-            indH2O  = find(strcmp(namecp, model.biochemFluid.pH2O));
-            indsub  = find(strcmp(namecp, model.biochemFluid.rsub));
-            indprod   = find(strcmp(namecp, model.biochemFluid.p2));
-            model.gammak(indH2)  = model.biochemFluid.gamrH2;
-            model.gammak(indH2O) =  model.biochemFluid.gampH2O;
-            model.gammak(indsub) = model.biochemFluid.gamrsub;
-            model.gammak(indprod)  = model.biochemFluid.gamp2;
-
 
 
             % Validate bacterial formulation

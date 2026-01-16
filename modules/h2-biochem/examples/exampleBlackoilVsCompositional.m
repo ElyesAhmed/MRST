@@ -43,15 +43,12 @@ fprintf('=== Setting up Compositional Models ===\n');
 compFluid = TableCompositionalMixture({'Water', 'Hydrogen', 'CarbonDioxide', 'Methane'}, ...
     {'H2O', 'H2', 'CO2', 'C1'});
 
-%% Define Metabolic reaction parameters
-biochemFluid = TableBioChemMixture({'MethanogenicArchae'});
-
 %% Common Parameters for Compositional Models
 z0 = [1.0, 0.0, 0.00, 0.0];  % Initial composition [H2O, H2, CO2, C1]
 T0 =  273.15 +60;
 %% Model 1: Compositional without Bacteria
 backend = DiagonalAutoDiffBackend('modifyOperators', true);
-model_comp_nobact = BiochemistryModel(G, rock, fluid_bo, compFluid, biochemFluid,...
+model_comp_nobact = BiochemistryModel(G, rock, fluid_bo, compFluid, ...
     true, backend, 'water', false, 'oil', true, 'gas', true, ...
     'bacteriamodel', false, 'liquidPhase', 'O', 'vaporPhase', 'G');
 model_comp_nobact.gravity = grav;
@@ -61,14 +58,14 @@ model_comp_nobact.OutputStateFunctions{end+1} = 'ComponentPhaseMass';
 state0_comp_nobact = initCompositionalState(model_comp_nobact, pInit, T0, [1.0, 0.0], z0);
 
 %% Model 2: Compositional with Bacteria (if enabled)
-model_comp_bact = BiochemistryModel(G, rock, fluid_bo, compFluid,biochemFluid, ...
+model_comp_bact = BiochemistryModel(G, rock, fluid_bo, compFluid, ...
     true, backend, 'water', false, 'oil', true, 'gas', true, ...
     'bacteriamodel', true, 'liquidPhase', 'O', 'vaporPhase', 'G');
 model_comp_bact.gravity = grav;
 model_comp_bact.OutputStateFunctions{end+1} = 'ComponentPhaseMass';
 model_comp_bact.nonlinearTolerance = 1.0e-6;
 nbact0 = 100;
-model_comp_bact.biochemFluid.nbactMax = 1e8;
+model_comp_bact.nbactMax = 1e8;
 % Initialize with bacteria
 state0_comp_bact = initCompositionalStateBacteria(model_comp_bact, pInit, T0, [1.0, 0.0], z0, nbact0);
 

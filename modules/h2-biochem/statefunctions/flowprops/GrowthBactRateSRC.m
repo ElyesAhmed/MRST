@@ -60,33 +60,16 @@ classdef GrowthBactRateSRC < StateFunction
             Psigrowth = 0;
 
             % Get component names and indices
-            rm = model.ReservoirModel;
-            bcrm=rm.biochemFluid;
+             rm = model.ReservoirModel;
             namecp = rm.getComponentNames();
-            idx_H2 = find(strcmpi(namecp, bcrm.rH2), 1);     % Case-insensitive search
-            idx_sub = find(strcmpi(namecp, bcrm.rsub), 1);   % Case-insensitive search
-            
-            % Check if bacterial modeling is active and components exist
-           %if ~(rm.bacteriamodel && rm.liquidPhase && ~isempty(idx_H2) && ~isempty(idx_sub))
-            %    return;
-            %end
+            idx_H2 = find(strcmpi(namecp, 'H2'), 1);     % Case-insensitive search
+            idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);   % Case-insensitive search
 
-            if ~(rm.bacteriamodel && rm.liquidPhase)
+            % Check if bacterial modeling is active and components exist
+            if ~(rm.bacteriamodel && rm.liquidPhase && ~isempty(idx_H2) && ~isempty(idx_CO2))
                 return;
             end
-            if strcmp(bcrm.metabolicReaction, 'MethanogenicArchae') || ...
-                    strcmp(bcrm.metabolicReaction, 'AcetogenicBacteria')
-                idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
-                if ~(~isempty(idx_H2) && ~isempty(idx_CO2))
-                    return;
-                end
-            end
-            % if strcmp(bcrm.metabolicReaction, 'SulfateReducingBacteria')
-            %     idx_SO4 = find(strcmpi(namecp, 'SO4'), 1);
-            %     if ~(~isempty(idx_H2) && ~isempty(idx_SO4))
-            %         return;
-            %     end
-            % end
+           
             % Get required properties
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');
             rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');
@@ -96,17 +79,18 @@ classdef GrowthBactRateSRC < StateFunction
             L_ix = rm.getLiquidIndex();
 
             % Extract liquid phase properties
-            if iscell(x)
+             if iscell(x)
                 xH2 = x{idx_H2};
-                xsub = x{idx_sub};
+                xCO2 = x{idx_CO2};
                 sL = s{L_ix};
                 rhoL = rho{L_ix};
             else
                 xH2 = x(:, idx_H2);
-                xsub = x(:, idx_sub);
+                xCO2 = x(:, idx_CO2);
                 sL = s(:, L_ix);
                 rhoL = rho(:, L_ix);
             end
+
 
             % Calculate effective volume with safeguards
             if iscell(sL)
@@ -117,16 +101,16 @@ classdef GrowthBactRateSRC < StateFunction
             Voln = max(Voln, 1.0e-8);
 
             % Get growth parameters
-            alphaH2 = bcrm.alphaH2;
-            alphasub = bcrm.alphasub;
-            Psigrowthmax = bcrm.Psigrowthmax;
+             alphaH2 = rm.alphaH2;
+            alphaCO2 = rm.alphaCO2;
+            Psigrowthmax = rm.Psigrowthmax;
 
             % Calculate Monod terms for H2 and CO2
             axH2 = xH2 ./ (alphaH2 + xH2);
-            axsub = xsub ./ (alphasub + xsub);
+            axCO2 = xCO2 ./ (alphaCO2 + xCO2);
 
             % Compute growth rate
-            Psigrowth = pv .* Psigrowthmax .* axH2 .* axsub .* nbact .* Voln;
+            Psigrowth = pv .* Psigrowthmax .* axH2 .* axCO2 .* nbact .* Voln;
         end
     end
 end
