@@ -61,6 +61,7 @@ classdef DecayBactRateSRC < StateFunction
             bbact = rm.b_bact;
             nbMax = rm.nbactMax;
 
+
             % Check if bacterial modeling is active
             if ~(rm.bacteriamodel && rm.liquidPhase)
                 return;
@@ -68,14 +69,15 @@ classdef DecayBactRateSRC < StateFunction
 
             % Get component names and indices
             namecp = rm.getComponentNames();
-            idx_H2 = find(strcmpi(namecp, 'H2'), 1);
-            idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);
+            idx_H2 = find(strcmpi(namecp, 'H2'), 1);     % Case-insensitive search
+            idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);   % Case-insensitive search
+
 
             % Validate required components
             if isempty(idx_H2) || isempty(idx_CO2)
                 return;
             end
-
+        
             % Get required state variables
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');
             rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');

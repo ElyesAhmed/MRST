@@ -30,7 +30,7 @@ mrstModule add h2-biochem compositional ad-blackoil ad-core ad-props mrst-gui
 gravity reset on
 
 %% ============ Grid and Rock Properties =====================
-[nx, ny, nz] = deal(31, 31, 8);
+[nx, ny, nz] = deal(15, 15, 8);
 [Lx, Ly, Lz] = deal(1525, 1525, 50);
 
 G = cartGrid([nx, ny, nz], [Lx, Ly, Lz]);
@@ -116,9 +116,9 @@ s0 = [0.2, 0.8];
 z0 = [0.7, 0.0, 0.02, 0.28];
 
 %% --- Simulation 1: Without bacteria ---
-arg = {G, rock, fluid, compFluid, true, backend, ...
+arg = {G, rock, fluid, compFluid,  true, backend, ...
     'water', false, 'oil', true, 'gas', true, ...
-    'bacteriamodel', false, ...
+    'bacteriamodel', false, 'moleculardiffusion', true,...
     'liquidPhase', 'O', 'vaporPhase', 'G'};
 
 model_nobact = BiochemistryModel(arg{:});
@@ -131,15 +131,15 @@ lsolve = selectLinearSolverAD(model_nobact);
 nls = NonLinearSolver(); nls.LinearSolver = lsolve;
 
 problem_nobact = packSimulationProblem(state0_nobact, model_nobact, schedule, ...
-    'Benchmark_NoBacteria', 'NonLinearSolver', nls);
+    'Benchmark_NoBacteria_15_diff', 'NonLinearSolver', nls);
 simulatePackedProblem(problem_nobact);
 [ws_nobact, states_nobact] = getPackedSimulatorOutput(problem_nobact);
 results_nobact = postProcessResults(states_nobact, ws_nobact, model_nobact, 'nobact');
 
 %% --- Simulation 2: With bacteria ---
-model_bact = BiochemistryModel(G, rock, fluid, compFluid, true, backend, ...
+model_bact = BiochemistryModel(G, rock, fluid, compFluid,  true, backend, ...
     'water', false, 'oil', true, 'gas', true, ...
-    'bacteriamodel', true, ...
+    'bacteriamodel', true, 'moleculardiffusion', true,...
     'liquidPhase', 'O', 'vaporPhase', 'G');
 model_bact.outputFluxes = false;
 model_bact.EOSModel = compEOS;
@@ -151,7 +151,7 @@ lsolve = selectLinearSolverAD(model_bact);
 nls.LinearSolver = lsolve;
 
 problem_bact = packSimulationProblem(state0_bact, model_bact, schedule, ...
-    'Benchmark_Bacteria', 'NonLinearSolver', nls);
+    'Benchmark_Bacteria_15diff', 'NonLinearSolver', nls);
 simulatePackedProblem(problem_bact);
 [ws_bact, states_bact] = getPackedSimulatorOutput(problem_bact);
 results_bact = postProcessResults(states_bact, ws_bact, model_bact, 'bact');

@@ -42,6 +42,8 @@ state0 = convertBlackOilStateToCompositional(modelBo, state0Bo);
 %% Define compositional fluid (H2, H2O, CO2, CH4)
 compFluid = TableCompositionalMixture({'Water', 'Hydrogen', 'CarbonDioxide', 'Methane'}, ...
     {'H2O', 'H2', 'CO2', 'C1'});
+
+%% EOS model
 EOS = EquationOfStateModel([], compFluid, 'sw');
 model.EOSModel = EOS;
 
@@ -66,7 +68,7 @@ end
 diagonal_backend = DiagonalAutoDiffBackend('modifyOperators', true);
 arg = {model.G, model.rock, model.fluid, compFluid,...
     false, diagonal_backend, 'oil', true, 'gas', true, ... % Define phases for water-oil system
-    'bacteriamodel', bacteriamodel, 'liquidPhase', 'O', ...
+    'bacteriamodel', bacteriamodel,'moleculardiffusion', true, 'liquidPhase', 'O', ...
     'vaporPhase', 'G'}; % Set phases and EOS model
 model = BiochemistryModel(arg{:});
 model.gravity = modelBo.gravity;
@@ -120,7 +122,7 @@ modelNoClogging = model;
 modelNoClogging.rock.perm = perm0;
 modelNoClogging.rock.poro = poro0;
 modelNoClogging.fluid.pvMultR = @(p, nbact) 1;
-modelNoClogging = BiochemistryModel(modelNoClogging.G, modelNoClogging.rock, modelNoClogging.fluid, compFluid, ...
+modelNoClogging = BiochemistryModel(modelNoClogging.G, modelNoClogging.rock, modelNoClogging.fluid, compFluid,...
     false, DiagonalAutoDiffBackend('modifyOperators', true), 'oil', true, 'gas', true, ...
     'bacteriamodel', true, 'liquidPhase', 'O', 'vaporPhase', 'G');
 state0NoClogging = state0;
