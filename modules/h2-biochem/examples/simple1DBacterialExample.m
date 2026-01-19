@@ -67,6 +67,7 @@ initComp  = [0.90, 0.045, 0.005, 0.05];
 initTemp  = 273.15 + 40;   % Absolute temperature [K]
 initPress = 82*barsa;      % Pressure [Pa]
 
+
 %% Bio-clogging model
 initBact  = 9;             % Normalized bacteria concentration
 nc = 180; % critical bacteria concentration
@@ -79,9 +80,9 @@ compFluid = TableCompositionalMixture( ...
     {'H2O','H2','C1','CO2'});
 
 backend = DiagonalAutoDiffBackend('modifyOperators', true);
-model   = BiochemistryModel(model.G, model.rock, model.fluid, compFluid, ...
+model   = BiochemistryModel(model.G, model.rock, model.fluid, compFluid,...
     true, backend, 'water', false, 'oil', true, 'gas', true, ...
-    'bacteriamodel', true, 'liquidPhase','O','vaporPhase','G');
+    'bacteriamodel', true, 'moleculardiffusion', true,'liquidPhase','O','vaporPhase','G');
 
 %% Shut Wells
 schedule.control.W(1).components = [0.001, 0.958, 0.001, 0.05];

@@ -6,7 +6,9 @@ classdef GrowthBactRateSRC < StateFunction
     %
     % DESCRIPTION:
     %   Computes the bacterial growth rate in each grid cell based on:
-    %   - H2 and CO2 concentrations (Monod kinetics)
+    %   - H2 and CO2 concentrations (Monod kinetics) for Methacenic archae
+    %   - H2 and SO4(2-) concentrations (Monod kinetics) for Sulfate
+    %   reducing bacteria
     %   - Bacterial population density
     %   - Liquid phase saturation and density
     %   - Pore volume
@@ -58,7 +60,7 @@ classdef GrowthBactRateSRC < StateFunction
             Psigrowth = 0;
 
             % Get component names and indices
-            rm = model.ReservoirModel;
+             rm = model.ReservoirModel;
             namecp = rm.getComponentNames();
             idx_H2 = find(strcmpi(namecp, 'H2'), 1);     % Case-insensitive search
             idx_CO2 = find(strcmpi(namecp, 'CO2'), 1);   % Case-insensitive search
@@ -67,7 +69,7 @@ classdef GrowthBactRateSRC < StateFunction
             if ~(rm.bacteriamodel && rm.liquidPhase && ~isempty(idx_H2) && ~isempty(idx_CO2))
                 return;
             end
-
+           
             % Get required properties
             pv = rm.PVTPropertyFunctions.get(rm, state, 'PoreVolume');
             rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');
@@ -77,7 +79,7 @@ classdef GrowthBactRateSRC < StateFunction
             L_ix = rm.getLiquidIndex();
 
             % Extract liquid phase properties
-            if iscell(x)
+             if iscell(x)
                 xH2 = x{idx_H2};
                 xCO2 = x{idx_CO2};
                 sL = s{L_ix};
@@ -89,6 +91,7 @@ classdef GrowthBactRateSRC < StateFunction
                 rhoL = rho(:, L_ix);
             end
 
+
             % Calculate effective volume with safeguards
             if iscell(sL)
                 Voln = max(sL{1}, 1.0e-8) .* rhoL{1};
@@ -98,7 +101,7 @@ classdef GrowthBactRateSRC < StateFunction
             Voln = max(Voln, 1.0e-8);
 
             % Get growth parameters
-            alphaH2 = rm.alphaH2;
+             alphaH2 = rm.alphaH2;
             alphaCO2 = rm.alphaCO2;
             Psigrowthmax = rm.Psigrowthmax;
 

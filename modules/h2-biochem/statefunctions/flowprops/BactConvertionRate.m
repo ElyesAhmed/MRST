@@ -54,7 +54,7 @@ classdef BactConvertionRate < StateFunction
             end
 
             % Get component indices
-            compNames = rm.EOSModel.getComponentNames();
+             compNames = rm.EOSModel.getComponentNames();
             idxH2  = find(strcmpi(compNames, 'H2'));
             idxCO2 = find(strcmpi(compNames, 'CO2'));
 
@@ -64,6 +64,7 @@ classdef BactConvertionRate < StateFunction
                 return;
             end
 
+           
             try
                 % Get required state variables
                 pv = rm.PVTPropertyFunctions.get(model.ReservoirModel, state, 'PoreVolume');
@@ -97,7 +98,7 @@ classdef BactConvertionRate < StateFunction
 
                 % Calculate growth rate using Monod kinetics
                 axH2 = xH2 ./ (alphaH2 + xH2);
-                axCO2 = xCO2 ./ (alphaCO2 + xCO2);
+                 axCO2 = xCO2 ./ (alphaCO2 + xCO2);
 
                 Psigrowth = pv .* Psigrowthmax .* axH2 .* axCO2 .* nbact .* sL;
 
