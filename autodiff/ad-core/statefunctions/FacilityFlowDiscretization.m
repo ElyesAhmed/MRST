@@ -3,7 +3,7 @@ classdef FacilityFlowDiscretization < StateFunctionGrouping
         PhaseFlux               % Phase flux in well-bore and to reservoir
         ComponentTotalFlux      % Total mass flux of each component
         ComponentPhaseFlux      % Mass flux of each component, in each phase
-        ComponentTotalMolecularDiffFlux %molecular diffusion flux of each component      
+        ComponentTotalMolecularDiffFlux %molecular diffusion flux of each component
         ComponentPhaseMolecularDiffFlux %molecular diffusion flux of each component, in each phase
         ComponentPhaseDensity   % Density of component in connecting cells
         PressureGradient        % Discrete pressure gradient into well bore
@@ -12,21 +12,20 @@ classdef FacilityFlowDiscretization < StateFunctionGrouping
         InjectionSurfaceDensity % Density of injected fluid at surface
         Mobility                % Phase mobilities in connecting cells
     end
-    
+
     methods
         function group = FacilityFlowDiscretization(model)
             group@StateFunctionGrouping('FacilityFluxProps');
-            
+
             group = group.setStateFunction('PhaseFlux', WellPhaseFlux(model));
             ctf = ComponentTotalFlux(model);
             ctf.label = 'Q_i';
             group = group.setStateFunction('ComponentTotalFlux', ctf);
             group = group.setStateFunction('ComponentPhaseFlux', WellComponentPhaseFlux(model));
-            
-            group = group.setStateFunction('ComponentTotalMolecularDiffFlux', ComponentTotalMolecularDiffFlux(model));%SDS modif
-            group = group.setStateFunction('ComponentPhaseMolecularDiffFlux', ComponentPhaseMolecularDiffFlux(model));%SDS modif
-                    
-            
+
+            group = group.setStateFunction('ComponentTotalMolecularDiffFlux', ComponentTotalMolecularDiffFlux(model));
+            group = group.setStateFunction('ComponentPhaseMolecularDiffFlux', ComponentPhaseMolecularDiffFlux(model));
+
             group = group.setStateFunction('PressureGradient', PerforationPressureGradient(model));
             group = group.setStateFunction('WellIndex', WellIndex(model));
             group = group.setStateFunction('FacilityWellMapping', FacilityWellMapping(model));

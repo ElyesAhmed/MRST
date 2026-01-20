@@ -1,4 +1,4 @@
-classdef BiochemicalFlowDiscretization < FlowDiscretization  %MolecDiffusFlowDiscretization  %
+classdef BiochemicalFlowDiscretization < FlowDiscretization
     % BiochemicalFlowDiscretization
     % Discretization and state function grouping for bio-chemical flow
     % within a compositional model with microbial growth.
@@ -11,7 +11,6 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization  %MolecDiffusFlowDis
         %-----------------------------------------------------------------%
         function props = BiochemicalFlowDiscretization(model)
             % Constructor: inherit base FlowDiscretization properties
-            %props = props@MolecDiffusFlowDiscretization(model);
             props = props@FlowDiscretization(model);
             if model.bacteriamodel
 
@@ -40,7 +39,6 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization  %MolecDiffusFlowDis
         %-----------------------------------------------------------------%
         function [acc, flux, names, types] = componentConservationEquations(fd, model, state, state0, dt)
             % Call parent method for standard component conservation
-            %[acc, flux, names, types] = componentConservationEquations@MolecDiffusFlowDiscretization(fd, model, state, state0, dt);
             [acc, flux, names, types] = componentConservationEquations@FlowDiscretization(fd, model, state, state0, dt);
         end
 

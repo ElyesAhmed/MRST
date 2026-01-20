@@ -31,7 +31,6 @@ classdef ComponentTotalFlux < StateFunction
                     end
                 end
             end
-            
         end
     end
 end

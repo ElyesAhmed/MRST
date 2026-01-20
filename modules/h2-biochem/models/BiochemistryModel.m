@@ -30,12 +30,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         % Bio-chemical flags
         bactrial = true;                  % Enable biochemical effects (debug)
         bacterialFormulation = 'bacterialmodel';
-        bacteriamodel = true;
 
         % Compositional fluid mixture
         compFluid
 
-        %parameters for biochemical reactions
+        % Physical quantities and bounds
         Y_H2 = 3.90875e11;               % 1/mole(H2)
         gammak   = [];                    % Stoichiometric coefficients
         alphaH2  = 3.6e-7;
@@ -45,7 +44,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         b_bact       = 2.35148e-6;       % 1/s
         nbactMax     = 1e9;              % 1/m^3
 
-        metabolicReaction = 'MethanogenicArchae';         
+        bacteriamodel = true;
+        metabolicReaction = 'MethanogenicArchae';
     end
 
     methods
@@ -67,7 +67,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
 
             %% Set compositional fluid and EOS
-           if isempty(compFluid)
+            if isempty(compFluid)
                 if strcmp(model.metabolicReaction, 'MethanogenicArchae')
                     compNames = {'Hydrogen', 'Water', 'Nitrogen', 'CarbonDioxide', 'Methane'};
                     compSymbols = {'H2', 'H2O', 'N2', 'CO2', 'C1'};
@@ -94,7 +94,6 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 model.compFluid = compFluid;
                 model.EOSModel = EquationOfStateModel([], compFluid, 'sw');
             end
-
 
             % Validate bacterial formulation
             assert(any(strcmpi(model.bacterialFormulation, {'bacterialmodel'})), ...

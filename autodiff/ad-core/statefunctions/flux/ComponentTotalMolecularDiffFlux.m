@@ -1,43 +1,36 @@
 classdef ComponentTotalMolecularDiffFlux < StateFunction
-    % Total molecular diffusion  flux of all components, summed up over all phases
-    properties
+    % ComponentTotalMolecularDiffFlux - Total molecular diffusion flux
+    % of components summed over all phases.
 
-    end
-    
     methods
-        function gp = ComponentTotalMolecularDiffFlux(varargin)
-            gp@StateFunction(varargin{:});
+        function gp = ComponentTotalMolecularDiffFlux(model, varargin)
+            gp@StateFunction(model, varargin{:});
             gp = gp.dependsOn('ComponentPhaseMolecularDiffFlux');
-            gp.label = 'Jmoldiff_i';
+            gp.label = 'J_i^{mol,diff}';
         end
-        
+
         function v = evaluateOnDomain(prop, model, state)
+            % Get phase-wise diffusion fluxes
+            J_phase = prop.getEvaluatedDependencies(state, 'ComponentPhaseMolecularDiffFlux');
+
             ncomp = model.getNumberOfComponents();
-            nph = model.getNumberOfPhases();
             v = cell(ncomp, 1);
-            Jmoldiff = prop.getEvaluatedDependencies(state, 'ComponentPhaseMolecularDiffFlux');
-            
+
+            % Sum over phases for each component
             for c = 1:ncomp
-                % Loop over phases where the component may be present
-                for ph = 1:nph
-                    % Check if present
-                    m = Jmoldiff{c, ph};
-                    if ~isempty(m)
-                        if isempty(v{c})
-                            v{c} = m;
-                        else
-                            v{c} = v{c} + m;
-                        end
+                v{c} = 0;
+                for ph = 1:model.getNumberOfPhases()
+                    if ~isempty(J_phase{c, ph})
+                        v{c} = v{c} + J_phase{c, ph};
                     end
                 end
             end
-            
         end
     end
 end
 
 %{
-Copyright 2009-2024 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 
