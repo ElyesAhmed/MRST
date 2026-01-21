@@ -15,13 +15,12 @@ classdef FlowDiscretization < StateFunctionGrouping
         Transmissibility % Face-based transmissibility
         ComponentPhaseMolecularDiffFlux % Molecular diffusion
         ComponentTotalMolecularDiffFlux % Molecular diffusion
-        
     end
 
     properties (Access = protected)
         FlowStateBuilder
     end
-    
+
     methods
         function props = FlowDiscretization(model)
             tpfa = TwoPointFluxApproximation(model);
@@ -29,14 +28,11 @@ classdef FlowDiscretization < StateFunctionGrouping
             props@StateFunctionGrouping('FluxDisc');
             % Darcy flux
             props = props.setStateFunction('Transmissibility', Transmissibility(model));
-            % props =
-            % props.setStateFunction('Transmissibility',DynamicFlowTransmissibility(model,
-            % 'Permeability')); dans molediffusFlowdiscretization. Quelle
-            % est la difference?????SDS modif
+
             props = props.setStateFunction('PermeabilityPotentialGradient', PermeabilityPotentialGradient(model, tpfa));
             props = props.setStateFunction('PressureGradient', PressureGradient(model));
             props = props.setStateFunction('GravityPotentialDifference', GravityPotentialDifference(model));
-            
+
             % Phase flux
             if ~isempty(model.inputdata) && isfield(model.inputdata.SOLUTION, 'THPRES')
                 ppd = PhasePotentialDifferenceThresholded(model);
@@ -45,25 +41,24 @@ classdef FlowDiscretization < StateFunctionGrouping
             end
             props = props.setStateFunction('PhasePotentialDifference', ppd);
             props = props.setStateFunction('PhaseUpwindFlag', PhaseUpwindFlag(model));
-            
+
             % Face values - typically upwinded
             props = props.setStateFunction('FaceComponentMobility', FaceComponentMobility(model));
             % Phase mobility on face
             props = props.setStateFunction('FaceMobility', FaceMobility(model));
-            % 
+            %
             props = props.setStateFunction('ComponentPhaseFlux', ComponentPhaseFlux(model));
             props = props.setStateFunction('ComponentTotalFlux', ComponentTotalFlux(model));
             props = props.setStateFunction('PhaseFlux', PhaseFlux(model));
-            
-            props = props.setStateFunction('ComponentPhaseMolecularDiffFlux', ...
-                ComponentPhaseMolecularDiffFlux(model));%molecular diffusion SDS modif
-            props = props.setStateFunction('ComponentTotalMolecularDiffFlux', ...
-                ComponentTotalMolecularDiffFlux(model));%molecular diffusion SDS modif
 
+            props = props.setStateFunction('ComponentPhaseMolecularDiffFlux', ...
+                ComponentPhaseMolecularDiffFlux(model));
+            props = props.setStateFunction('ComponentTotalMolecularDiffFlux', ...
+                ComponentTotalMolecularDiffFlux(model));
 
             % Flow discretizer
             props.FlowStateBuilder = ImplicitFlowStateBuilder();
-            
+
             % Conservation equations needs total mass fluxes and total masses
             props = props.functionDependsOn('componentConservationEquations', {'ComponentTotalMass', 'ComponentTotalFlux'});
         end
@@ -74,11 +69,11 @@ classdef FlowDiscretization < StateFunctionGrouping
                 warning('No output argument -- FlowStateBuilder was not changed.');
             end
         end
-        
+
         function fb = getFlowStateBuilder(fd)
             fb = fd.FlowStateBuilder;
         end
-        
+
         function [acc, v, names, types] = componentConservationEquations(fd, model, state, state0, dt)
             % Compute discretized conservation equations in the interior of the domain.
             % REQUIRED PARAMETERS:
@@ -115,16 +110,11 @@ classdef FlowDiscretization < StateFunctionGrouping
 
             % Add molecular diffusion contributions if present
             if model.molecularDiffusion
-                % Get active phases
-                act = model.getActivePhases();
-                nph = sum(act);
                 % Get molecular diffusion fluxes
-                Jmoldiff = model.getProps(flowState, 'ComponentPhaseMolecularDiffFlux');
+                Jmoldiff = model.getProps(flowState, 'ComponentTotalMolecularDiffFlux');
                 % Add diffusion fluxes to total component fluxes
                 for c = 1:ncomp
-                    for ph = 1:nph
-                        v{c} = v{c} + Jmoldiff{c, ph};
-                    end
+                    v{c} = v{c} + Jmoldiff{c};
                 end
             end
         end
@@ -132,11 +122,11 @@ classdef FlowDiscretization < StateFunctionGrouping
         function flowState = buildFlowState(fd, model, state, state0, dt)
             flowState = fd.FlowStateBuilder.build(fd, model, state, state0, dt);
         end
-        
+
         function dt = getMaximumTimestep(fd, model, state, state0, dt, forces)
             dt = fd.FlowStateBuilder.getMaximumTimestep(fd, model, state, state0, dt, forces);
         end
-        
+
         function [fd, state] = prepareTimestep(fd, model, state, state0, dt, drivingForces)
             % Called before each time-step solve
             [fd.FlowStateBuilder, state] = fd.FlowStateBuilder.prepareTimestep(fd, model, state, state0, dt, drivingForces);

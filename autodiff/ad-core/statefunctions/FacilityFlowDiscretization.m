@@ -3,8 +3,8 @@ classdef FacilityFlowDiscretization < StateFunctionGrouping
         PhaseFlux               % Phase flux in well-bore and to reservoir
         ComponentTotalFlux      % Total mass flux of each component
         ComponentPhaseFlux      % Mass flux of each component, in each phase
-        ComponentTotalMolecularDiffFlux %molecular diffusion flux of each component
-        ComponentPhaseMolecularDiffFlux %molecular diffusion flux of each component, in each phase
+        ComponentTotalMolecularDiffFlux % Molecular diffusion flux of each component
+        ComponentPhaseMolecularDiffFlux % Molecular diffusion flux of each component, in each phase
         ComponentPhaseDensity   % Density of component in connecting cells
         PressureGradient        % Discrete pressure gradient into well bore
         WellIndex               % Well connection factor / well index
