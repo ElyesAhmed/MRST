@@ -68,7 +68,7 @@ end
 diagonal_backend = DiagonalAutoDiffBackend('modifyOperators', true);
 arg = {model.G, model.rock, model.fluid, compFluid,...
     false, diagonal_backend, 'oil', true, 'gas', true, ... % Define phases for water-oil system
-    'bacteriamodel', bacteriamodel,'moleculardiffusion', true, 'liquidPhase', 'O', ...
+    'bacteriamodel', bacteriamodel,'molecularDiffusion', true, 'liquidPhase', 'O', ...
     'vaporPhase', 'G'}; % Set phases and EOS model
 model = BiochemistryModel(arg{:});
 model.gravity = modelBo.gravity;
@@ -115,7 +115,7 @@ nls.LinearSolver = lsolve;
 %% Pack and run simulations
 % --- With bio-clogging
 problemWithClogging = packSimulationProblem(state0, model, schedule, caseNameWithClogging, 'NonLinearSolver', nls);
-simulatePackedProblem(problemWithClogging);
+simulatePackedProblem(problemWithClogging, 'RestartStep',1);
 
 % --- Without clogging
 modelNoClogging = model;
@@ -128,7 +128,7 @@ modelNoClogging = BiochemistryModel(modelNoClogging.G, modelNoClogging.rock, mod
 state0NoClogging = state0;
 caseNameNoClogging = [baseName '_NO_CLOGGING'];
 problemNoClogging = packSimulationProblem(state0NoClogging, modelNoClogging, schedule, caseNameNoClogging, 'NonLinearSolver', nls);
-simulatePackedProblem(problemNoClogging);
+simulatePackedProblem(problemNoClogging,'RestartStep',1);
 
 % --- Without bacteria
 modelNoBact = model;
