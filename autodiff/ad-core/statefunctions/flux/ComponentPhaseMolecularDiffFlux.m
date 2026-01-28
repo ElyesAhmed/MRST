@@ -1,12 +1,8 @@
 classdef ComponentPhaseMolecularDiffFlux < StateFunction
-    % ComponentPhaseMolecularDiffFlux - Molecular diffusion flux of each component in each phase
+    % ComponentPhaseMolecularDiffFlux - Molecular diffusion flux for each component
     %
-    % Uses Quirk-Millington model for tortuosity with Blanc's law for gas
-    % phase binary diffusion and literature values for liquid phase.
-    %
-    % Author: Stéphanie Delage Santacreu
-    % Organization: Université de Pau et des Pays de l'Adour, E2S UPPA,
-    %                CNRS, LFCR, UMR5150, Pau, France
+    % Uses Quirk-Millington tortuosity model with Blanc's law for gas phase
+    % binary diffusion and literature values for liquid phase.
 
     methods
         function gp = ComponentPhaseMolecularDiffFlux(model, varargin)
@@ -24,17 +20,13 @@ classdef ComponentPhaseMolecularDiffFlux < StateFunction
                 J = cellfun(@(x) 0, J, 'UniformOutput', false);
                 return;
             end
-
-            % Main calculation
             J = calculateMolecularDiffusionFluxes(prop, model, state);
         end
     end
 end
 
-%% Helper functions
-
+%% Setup and Calculation Functions
 function gp = setupDependencies(gp, model)
-% Set up all required dependencies
 gp = gp.dependsOn('Density', 'PVTPropertyFunctions');
 gp = gp.dependsOn('PoreVolume', 'PVTPropertyFunctions');
 gp = gp.dependsOn('s', 'state');
@@ -45,117 +37,132 @@ gp = gp.dependsOn('T', 'state');
 end
 
 function J = calculateMolecularDiffusionFluxes(prop, model, state)
-% Calculate molecular diffusion fluxes for all components and phases
-
 ncomp = model.getNumberOfComponents;
 nph = model.getNumberOfPhases;
 nm = model.getPhaseNames();
 
-% Initialize output
+% Initialize
 J = cell(ncomp, nph);
 [J{:}] = deal(0);
 
-% Get diffusion coefficients
+% Get diffusion parameters
 [mol_diff, param_LJ, Dij] = getDiffusionParameters(model);
 
-% Get properties
+% Get required properties
 rho = prop.getEvaluatedExternals(model, state, 'Density');
-poro = model.getProp(state, 'Porosity');
+pvtprops = model.PVTPropertyFunctions;
+pv = pvtprops.get(prop, state, 'PoreVolume');
 [p, T] = model.getProps(state, 'pressure', 'temperature');
-%  poro = getPorosity(model, p, state);
+[xc, yc] = getMoleFractions(model, state);
+% Gas diffusion coefficient base
+p_atm = convertTo(value(p), atm);
+coeff1 = T.^(1.5) ./ p_atm;
 
-% Coefficients for gas diffusion
-coeff1 = T.^(1.5) ./ (9.869e-6 .* p); % Convert pressure to atm
-
-% Get phase indices
+% Phase indices
 L_ix = model.getLiquidIndex();
 V_ix = model.getVaporIndex();
 
-% Calculate fluxes for each component and phase
+% Calculate fluxes
 for c = 1:ncomp
-    [xc, yc] = getMoleFractions(state, c);
 
     for ph = 1:nph
         s = model.getProp(state, ['s', nm(ph)]);
 
         if ph == L_ix
-            J{c, ph} = calculateLiquidDiffusionFlux(prop, model, s, rho{ph}, ...
-                xc, mol_diff(c, ph), poro);
+            J{c, ph} = calculateLiquidDiffusionFlux(...
+                model, s, rho{ph}, xc{c}, mol_diff(c, ph), pv);
 
         elseif ph == V_ix
-            J{c, ph} = calculateGasDiffusionFlux(prop, model, state, s, rho{ph}, ...
-                yc, coeff1, Dij(c, :), poro, c);
+            J{c, ph} = calculateGasDiffusionFlux(...
+                model, state, s, rho{ph}, yc{c}, coeff1, Dij(c, :), pv, c);
         end
     end
 end
 end
 
+%% Diffusion Coefficient Functions
 function [mol_diff, param_LJ, Dij] = getDiffusionParameters(model)
-% Load diffusion coefficients and calculate binary diffusion matrix
-
 % Get component names
 namecp = model.compFluid.names();
 
-% Define component indices
-componentNames = {'H2', 'C1', 'CO2', 'H2O', 'N2', 'C2', 'C3', 'H2S', 'NC4'};
+% Component database
+componentNames = {'H2', 'C1', 'CO2', 'H2O', 'N2', 'C2', 'C3', 'H2S', 'NC4', ...
+    'water', 'oil', 'gas', 'methane', 'ethane', 'propane', 'butane'};
+
 indices = createComponentIndices(namecp, componentNames);
-
-% Load diffusion coefficients (40°C)
 [mol_diff, param_LJ] = loadDiffusionCoefficients(indices, componentNames);
-
-% Calculate binary diffusion coefficients
 Dij = calculateBinaryDiffusionMatrix(model, param_LJ);
 end
 
 function indices = createComponentIndices(namecp, componentNames)
-% Create indices for component lookup
 indices = struct();
 for i = 1:numel(componentNames)
     name = componentNames{i};
     idx = find(strcmp(namecp, name));
     if ~isempty(idx)
-        indices.(name) = idx;
+        indices.(lower(name)) = idx(1);
     end
 end
 end
 
 function [mol_diff, param_LJ] = loadDiffusionCoefficients(indices, componentNames)
-% Load diffusion coefficients from databases
+% Default values
+DEFAULT_LIQUID = 1e-9;
+DEFAULT_GAS = 1e-5;
+DEFAULT_LJ = [3.5, 150.0];
 
-ncomp = max(structfun(@(x) x, indices));
-mol_diff = zeros(ncomp, 2);
-param_LJ = zeros(ncomp, 2);
+% Determine number of components
+if isempty(fieldnames(indices))
+    error('No component names matched. Check component naming.');
+end
+ncomp = max(cell2mat(struct2cell(indices)));
 
-% Diffusion coefficients at 40°C [liquid, gas] (m²/s)
-% Note: Salinity reduces coefficients by 10-30%
+mol_diff = DEFAULT_LIQUID * ones(ncomp, 2);
+param_LJ = repmat(DEFAULT_LJ, ncomp, 1);
+
+% Database (40°C) [liquid, gas] in m²/s
 coeffs = struct(...
-    'H2',  [6.44e-9, 6.1e-5], ...
-    'C1',  [2.15e-9, 1.6e-5], ...
-    'H2O', [3.29e-9, 1.5e-5], ...
-    'CO2', [2.72e-9, 1.4e-5], ...
-    'N2',  [2.86e-9, 1.8e-5], ...
-    'C2',  [1.72e-9, 2.5e-5], ...
-    'C3',  [1.43e-9, 2.2e-5], ...
-    'H2S', [2.15e-9, 2.2e-5], ...
-    'NC4', [1.15e-9, 1.9e-5]);
+    'h2',       [6.44e-9, 6.1e-5], ...
+    'c1',       [2.15e-9, 1.6e-5], ...
+    'methane',  [2.15e-9, 1.6e-5], ...
+    'co2',      [2.72e-9, 1.4e-5], ...
+    'h2o',      [3.29e-9, 1.5e-5], ...
+    'water',    [3.29e-9, 1.5e-5], ...
+    'n2',       [2.86e-9, 1.8e-5], ...
+    'c2',       [1.72e-9, 2.5e-5], ...
+    'ethane',   [1.72e-9, 2.5e-5], ...
+    'c3',       [1.43e-9, 2.2e-5], ...
+    'propane',  [1.43e-9, 2.2e-5], ...
+    'h2s',      [2.15e-9, 2.2e-5], ...
+    'nc4',      [1.15e-9, 1.9e-5], ...
+    'butane',   [1.15e-9, 1.9e-5], ...
+    'oil',      [1.0e-9,  1.5e-5], ...
+    'gas',      [0.5e-9,  2.0e-5]);
 
-% Lennard-Jones parameters [diameter (Å), potential (K)]
 coeffs_LJ = struct(...
-    'H2',  [2.92,   59.7], ...
-    'C1',  [3.758, 148.6], ...
-    'H2O', [2.641, 809.1], ...
-    'CO2', [3.996, 195.2], ...
-    'N2',  [3.798,  71.4], ...
-    'C2',  [4.443, 215.7], ...
-    'C3',  [5.118, 237.1], ...
-    'H2S', [3.60,  301.0], ...
-    'NC4', [5.206, 289.5]);
+    'h2',       [2.92,   59.7], ...
+    'c1',       [3.758, 148.6], ...
+    'methane',  [3.758, 148.6], ...
+    'co2',      [3.996, 195.2], ...
+    'h2o',      [2.641, 809.1], ...
+    'water',    [2.641, 809.1], ...
+    'n2',       [3.798,  71.4], ...
+    'c2',       [4.443, 215.7], ...
+    'ethane',   [4.443, 215.7], ...
+    'c3',       [5.118, 237.1], ...
+    'propane',  [5.118, 237.1], ...
+    'h2s',      [3.60,  301.0], ...
+    'nc4',      [5.206, 289.5], ...
+    'butane',   [5.206, 289.5], ...
+    'oil',      [5.0,   400.0], ...
+    'gas',      [3.5,   100.0]);
 
-% Assign coefficients to components
-for i = 1:numel(componentNames)
-    comp = componentNames{i};
-    if isfield(indices, comp) && isfield(coeffs, comp)
-        idx = indices.(comp);
+% Assign known coefficients
+fields = fieldnames(indices);
+for i = 1:numel(fields)
+    comp = fields{i};
+    idx = indices.(comp);
+    if isfield(coeffs, comp)
         mol_diff(idx, :) = coeffs.(comp);
         param_LJ(idx, :) = coeffs_LJ.(comp);
     end
@@ -163,122 +170,79 @@ end
 end
 
 function Dij = calculateBinaryDiffusionMatrix(model, param_LJ)
-% Calculate binary diffusion coefficients matrix
-
 ncomp = size(param_LJ, 1);
 Molmass = 1.e3 .* model.compFluid.molarMass;
 SigLJ = param_LJ(:, 1);
 
 Dij = zeros(ncomp);
-for c = 1:ncomp
-    for cj = 1:ncomp
-        sqrtMij = sqrt(2 * Molmass(c) * Molmass(cj) / (Molmass(c) + Molmass(cj)));
-        Sigij2 = 0.25 * (SigLJ(c) + SigLJ(cj))^2;
-        Dij(c, cj) = 1.e-4 * 0.001858 / (sqrtMij * Sigij2); % m²/s
+for i = 1:ncomp
+    for j = 1:ncomp
+        sqrtMij = sqrt(2 * Molmass(i) * Molmass(j) / (Molmass(i) + Molmass(j)));
+        Sigij2 = 0.25 * (SigLJ(i) + SigLJ(j))^2;
+        Dij(i, j) = 1.e-4 * 0.001858 / (sqrtMij * Sigij2); % m²/s
     end
 end
 end
 
-function poro = getPorosity(model, p, state)
-% Get porosity with optional bioclogging
-if model.dynamicFlowPv()
-    if model.bacteriamodel
-        poro = model.rock.poro(p, state.nbact);
-    else
-        poro = model.rock.poro(p);
-    end
+%% Flux Calculation Functions
+function [xc, yc] = getMoleFractions(model, state)
+% For black-oil models
+if isfield(state, 'rs') || isfield(state, 'rv')
+    error('Black-oil diffusion with rs/rv is under development');
+end
+
+[x, y] = model.getProps(state, 'x', 'y');
+% Compositional models
+if iscell(x)
+    xc = x;
 else
-    poro = model.rock.poro;
-end
+    xc = {x};
 end
 
-function [xc, yc] = getMoleFractions(state, c)
-% Extract mole fractions for component c
-if iscell(state.x)
-    xc = state.x{c};
+if iscell(y)
+    yc = y;
 else
-    xc = state.x(:, c);
-end
-
-if iscell(state.y)
-    yc = state.y{c};
-else
-    yc = state.y(:, c);
+    yc = {y};
 end
 end
 
-function flux = calculateLiquidDiffusionFlux(prop, model, s, rho, xc, D_mol, poro)
-% Calculate liquid phase diffusion flux
-avg = model.operators.faceAvg;
+function flux = calculateLiquidDiffusionFlux(model, s, rho, xc, D_mol, poro)
+op = model.operators;
 
-% Millington-Quirk tortuosity model
+% Millington-Quirk tortuosity
 tau_mq = (s .* poro).^(7/3) .* poro.^(-2);
 
 % Effective diffusivity
-D_eff = avg(s .* rho .* D_mol .* tau_mq .* poro);
+D_eff = op.faceAvg(s .* rho .* D_mol .* tau_mq .* poro);
 
 % Diffusion flux
-flux = -D_eff .* model.operators.Grad(xc);
+flux = -D_eff .* op.Grad(xc);
 end
 
-function flux = calculateGasDiffusionFlux(prop, model, state, s, rho, yc, coeff1, Dij_row, poro, compIdx)
-% Calculate gas phase diffusion flux using Blanc's law
-avg = model.operators.faceAvg;
+function flux = calculateGasDiffusionFlux(model, state, s, rho, yc, coeff1, Dij_row, poro, compIdx)
+op = model.operators;
 ncomp = model.getNumberOfComponents();
+y = model.getProps(state, 'y');
 
-% Millington-Quirk tortuosity model
+% Millington-Quirk tortuosity
 tau_mq = (s .* poro).^(7/3) .* poro.^(-2);
 
-% Calculate effective binary diffusion coefficient
+% Blanc's law for effective binary diffusion
 D_diffij_inv = zeros(size(yc));
 for cj = 1:ncomp
     if cj ~= compIdx
-        if iscell(state.y)
-            ycj = state.y{cj};
+        if iscell(y)
+            ycj = y{cj};
         else
-            ycj = state.y(:, cj);
+            ycj = y(:, cj);
         end
         D_diffij_inv = D_diffij_inv + ycj ./ Dij_row(cj);
     end
 end
 
 D_diffij = coeff1 ./ max(D_diffij_inv, 1.e-16);
-D_diff = avg(s .* rho .* D_diffij .* tau_mq .* poro);
+D_diff = op.faceAvg(s .* rho .* D_diffij .* tau_mq .* poro);
 
 % Diffusion flux
-flux = -D_diff .* model.operators.Grad(yc);
+flux = -D_diff .* op.Grad(yc);
 end
-
-%% Coefficient tables (for reference)
-%{
-% Diffusion coefficients at 25°C (commented out for reference)
-% coeffs_25C = struct(...
-%     'H2',  [4.5e-9, 6.1e-5], ...
-%     'C1',  [1.5e-9, 1.6e-5], ...
-%     'H2O', [2.3e-9, 1.5e-5], ...
-%     'CO2', [1.9e-9, 1.4e-5], ...
-%     'N2',  [2.0e-9, 1.8e-5], ...
-%     'C2',  [1.2e-9, 2.5e-5], ...
-%     'C3',  [1.0e-9, 2.2e-5], ...
-%     'H2S', [1.5e-9, 2.2e-5], ...
-%     'NC4', [0.8e-9, 1.9e-5]);
-%}
-
-%{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
-
-This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
-
-MRST is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-MRST is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with MRST.  If not, see <http://www.gnu.org/licenses/>.
-%}

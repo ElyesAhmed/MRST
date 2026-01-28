@@ -381,7 +381,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             % Get values for convergence check
             [v_eqs, tolerances, names] = getConvergenceValues@ReservoirModel(model, problem, varargin{:});
             bacteriaIndex = find(strcmp(names, 'bacteria (cell)'));
-            tolerances(bacteriaIndex) = 5.0e-2;
+            tolerances(bacteriaIndex) = 1.0e-2;
             if model.bacteriamodel
                 scale = model.getEquationScaling(problem.equations, problem.equationNames, problem.state, problem.dt);
                 ix    = ~cellfun(@isempty, scale);
@@ -464,7 +464,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         function [state, report] = updateState(model, state, problem, dz, drivingForces)
             [state, report] = updateState@GenericOverallCompositionModel(model, state, problem, dz, drivingForces);
             if model.bacteriamodel
-                state = model.capProperty(state, 'nbact', 1, 120);
+                state = model.capProperty(state, 'nbact', 2.0, 120);
 
                 state = model.capProperty(state, 's', 1.0e-8, 1);
                 state.components = ensureMinimumFraction(state.components, model.EOSModel.minimumComposition);
