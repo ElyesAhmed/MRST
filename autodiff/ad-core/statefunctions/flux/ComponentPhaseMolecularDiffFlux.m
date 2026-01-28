@@ -67,7 +67,6 @@ for c = 1:ncomp
 
     for ph = 1:nph
         s = model.getProp(state, ['s', nm(ph)]);
-
         if ph == L_ix
             J{c, ph} = calculateLiquidDiffusionFlux(...
                 model, s, rho{ph}, xc{c}, mol_diff(c, ph), pv);
@@ -195,14 +194,14 @@ end
 % Compositional models
 if iscell(x)
     xc = x;
-else
-    xc = {x};
+else        
+    xc = mat2cell(x, size(x, 1), ones(1, size(x, 2)));
 end
 
 if iscell(y)
     yc = y;
 else
-    yc = {y};
+    yc = mat2cell(y, size(y, 1), ones(1, size(y, 2)));
 end
 end
 
