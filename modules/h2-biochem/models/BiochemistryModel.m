@@ -39,7 +39,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         % Physical quantities and bounds
         gammak   = [];                    % Stoichiometric coefficients
         bacteriamodel = true;
-        bact_capProp = 3.0e-3;             % Min nbact in the model
+        bact_capProp = 3.0e-6;             % Min nbact in the model
         molecularDiffusion = false;
         molecularDispersion = false;
         bactDiffusion = false;            % Microbial diffusion
@@ -102,9 +102,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 'BioChemistryModel supports currently only one micro-organism');
 
             % Set output state functions
-            model.OutputStateFunctions = {'ComponentTotalMass', 'Density'};
             model.FlowDiscretization = BiochemicalFlowDiscretization(model);
-
+            model.OutputStateFunctions = {'ComponentTotalMass', 'Density'};
             % Set up state function groupings
             model = model.setupStateFunctionGroupings();
         end

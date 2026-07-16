@@ -1,10 +1,10 @@
 function [biochemFluid, model, schedule, state0] = setupH2StorageExample(varargin)
-% Set up a detailed H2 storage case for bio‑reactive transport studies
-% with a cyclic injection/production schedule.
+% Set up a 1D UHS case reproducing the simple storage cycle from
+% Shojae et al. (2025) – "New flow simulation framework ..."
 %
-% SYNOPSIS:
-%   [biochemFluid, model, schedule, state0] = setupH2StorageExample()
-%   [biochemFluid, model, schedule, state0] = setupH2StorageExample('bacteriamodel', true, ...)
+% Grid: 50 x 1 x 1, 50 m length, 1 m width, 1 m height.
+% Initial: 150 bar, 60 °C, Sw=0.5508, gas: 90% H2, 10% CH4.
+% Schedule: inject H2 (0.565 kg/d) for 50 d, shut-in 150 d, produce (rate with BHP limit 150 bar) for 50 d.
 %
 % OPTIONAL PARAMETERS (property/value pairs):
 %   bacteriamodel       - Enable bacterial growth/decay (default: false)
@@ -14,12 +14,12 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExample(varargi
 %   molecularDispersion - Enable mechanical dispersion (default: false)
 %   bioClogging         - Enable bio‑clogging (default: false)
 %   nbact0              - Initial bacterial concentration (default: 1e-6)
-%   ncycles             - Number of injection/production cycles (default: 1)
+%   ncycles             - Not used (only one cycle)
 %
 % RETURNS:
-%   biochemFluid - Biochemical reaction definition
+%   biochemFluid - Biochemical reaction definition (with stoichiometry & kinetics)
 %   model        - BiochemistryModel
-%   schedule     - Cyclic schedule (build‑up, rest, injection, idle, production, idle)
+%   schedule     - Cyclic schedule (injection, shut-in, production)
 %   state0       - Initial state
 
     require ad-props compositional deckformat h2-biochem
@@ -31,27 +31,54 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExample(varargi
                  'molecularDiffusion', false, ...
                  'molecularDispersion', false, ...
                  'bioClogging', false, ...
-                 'nbact0', 10, ...
+                 'nbact0', 10e0, ...
                  'ncycles', 1);
     opt = merge_options(opt, varargin{:});
 
-    %% 1. Grid and rock (use the simplecomp deck for a real 3D grid)
-    pth = getDatasetPath('simplecomp');
-    fn  = fullfile(pth, 'SIMPLE_COMP.DATA');
-    deck = readEclipseDeck(fn);
-    deck = convertDeckUnits(deck);
-    G = initEclipseGrid(deck);
+    %% 1. Grid and rock – 1D horizontal, 50 cells
+    G = cartGrid([50, 1, 1], [50, 1, 1]);
     G = computeGeometry(G);
-    rock = initEclipseRock(deck);
-    rock = compressRock(rock, G.cells.indexMap);
+    rock = makeRock(G, 100 * milli * darcy, 0.20);
 
-    %% 2. Fluid components and EOS
-    % Five components: H2O, H2, CO2, CH4, CH3COOH
+    %% 2. Fluid components and EOS (5 components)
     compFluid = TableCompositionalMixture( ...
         {'Water', 'Hydrogen', 'CarbonDioxide', 'Methane', 'AceticAcid'}, ...
         {'H2O', 'H2', 'CO2', 'C1', 'CH3COOH'});
     biochemFluid = TableBioChemMixture({'MethanogenicArchae', 'AcetogenicBacteria'}, ...
                                        {'bactM', 'bactA'});
+
+    % ----- OVERRIDE KINETIC PARAMETERS TO MATCH PAPER (MODERATE RATE) -----
+    % Keep original database intact; override only the fields we need.
+    % Values from Shojae et al. (2025) Table 5, converted to MRST units.
+
+    % 1. MethanogenicArchae
+    idxM = strcmp(biochemFluid.metabolicReaction, 'MethanogenicArchae');
+    if any(idxM)
+        biochemFluid.Psigrowthmax(idxM) = 1.109 / 86400;      % 1.284e-5 s^-1
+        biochemFluid.alphaH2(idxM)      = 10e-6 / 55.5;       % 1.8e-7 (mol/mol)
+        biochemFluid.alphasub(idxM)     = 230e-6 / 55.5;      % 4.14e-6 (mol/mol)
+        biochemFluid.bbact(idxM)        = 0.01 * biochemFluid.Psigrowthmax(idxM); % 1.284e-7
+        biochemFluid.Y_H2(idxM)         = 3.0e10;             % cells/mol H2 (scaled)
+        %biochemFluid.nbactMax(idxM)     = 1.06e8;             % cells/m^3
+    end
+
+    % 2. AcetogenicBacteria
+    idxA = strcmp(biochemFluid.metabolicReaction, 'AcetogenicBacteria');
+    if any(idxA)
+        biochemFluid.Psigrowthmax(idxA) = 0.872 / 86400;      % 1.009e-5 s^-1
+        biochemFluid.alphaH2(idxA)      = 2.5e-6 / 55.5;      % 4.5e-8 (mol/mol)
+        biochemFluid.alphasub(idxA)     = 115e-6 / 55.5;      % 2.07e-6 (mol/mol)
+        biochemFluid.bbact(idxA)        = 0.01 * biochemFluid.Psigrowthmax(idxA); % 1.009e-7
+        biochemFluid.Y_H2(idxA)         = 7.0e10;             % cells/mol H2 (scaled)
+        %biochemFluid.nbactMax(idxA)     = 1.06e8;             % cells/m^3
+    end
+
+    % Optionally, override stoichiometry if you want to be explicit
+    % (already correct in database, but we can set it anyway)
+    biochemFluid.gamrH2  = [-4, -4];
+    biochemFluid.gamrsub = [-1, -2];
+    biochemFluid.gampH2O = [ 2,  2];
+    biochemFluid.gamp2   = [ 1,  1];
     eos = SoreideWhitsonEos(G, compFluid, 'msalt', 0);  % fresh water
 
     % Simple fluid (used as a base for transport properties)
@@ -85,80 +112,107 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExample(varargi
         nbact0 = opt.nbact0 * ones(1, biochemFluid.nbioreact);
         model = setupBioCloggingModel(model, nbact0, nc, cp, true);
     else
-        % Attach a dummy bio‑clogging model to avoid errors
         nc = [180,180];               % critical bacteria concentration
         cp = [0.0, 0.0];               % scaling coefficient
         nbact0 = opt.nbact0 * ones(1, biochemFluid.nbioreact);
         model = setupBioCloggingModel(model, nbact0, nc, cp, false);
     end
 
-    %% 4. Initial state
-    p0 = 82*barsa;                     % initial pressure
-    T0 = 273.15 + 40;                  % 40 °C
-    s0 = [0.21, 0.79];                   % fully water‑saturated
-    z0_overall = [0.8480, 0.5e-5, 1.0e-5, 0.1530,0.5e-5];  % pure water (mole fractions)
-    % Replicate to all cells
+    %% 4. Initial state – based on paper's 1D case
+    p0 = 150 * barsa;                     % initial pressure
+    T0 = 273.15 + 60;                     % 60 °C
+    % ---- MODIFIED: your requested initial saturations ----
+    Sw = 0.90;                            % Water saturation (90% water, as you said)
+    Sg = 1 - Sw;                          % Gas saturation = 10%
+
+    % Gas phase: 100% CH4 (NO H2!)
+    z_gas = [0, 0.0, 0.0, 1.0, 0.0];      % H2O=0, H2=0, CO2=0, CH4=1, CH3COOH=0
+
+    % Water phase: pure water + dissolved CO2 (electron acceptor for bacteria)
+    CO2_in_water = 7.929e-5;                % ~4e-5 mole fraction (adjust as needed)
+    z_water = [1.0 - CO2_in_water, 0.0, CO2_in_water, 0.0, 0.0];
+
+    % Overall mole fractions = Sw * z_water + Sg * z_gas
+    z0_overall = Sw * z_water + Sg * z_gas;
+
     ncell = G.cells.num;
     z0 = repmat(z0_overall, ncell, 1);
 
     if opt.bacteriamodel
         nbact0 = opt.nbact0 * ones(1, biochemFluid.nbioreact);
-        state0 = initCompositionalStateBacteria(model, p0, T0, s0, z0, nbact0, ...
-                                                 eos);
+        state0 = initCompositionalStateBacteria(model, p0, T0, [Sw, Sg], z0, nbact0, eos);
     else
-        state0 = initCompositionalState(G, p0, T0, s0, z0, eos);
+        state0 = initCompositionalState(G, p0, T0, [Sw, Sg], z0, eos);
     end
 
-    %% 5. Wells (CO2‑rich injector, H2‑rich injector, producer)
+    %% 5. Wells – injector at cell 1, producer at cell 50
+    % Injection rate: 6.2811 sm3/day of H2 ≈ 0.565 kg/day (using rho_H2=0.0899 kg/m3)
+    q_inj = 0.565 * kilogram/day;   % mass rate of H2
+    q_prod = -0.565 * kilogram/day;
+
+    % Well components: injection of pure H2
+    comp_inj = [0.0, 0.95, 0.05, 0.0, 0.0];   % H2 only
+
     injCell = 1;
-    prodCell = G.cells.num;
-    W = addWell([], G, rock, injCell, ...
+    prodCell = 1;
+
+    % Injector
+    W_inj = addWell([], G, rock, injCell, ...
         'Type', 'rate', ...
-        'Val', 10 * kilogram/day, ...
-        'components', [0.0, 0.95, 0.05, 0.0, 0.0], ...
+        'Val', q_inj, ...
+        'Sign', 1, ...               % injection
+        'components', comp_inj, ...
         'Comp_i', [0, 1], ...
         'Name', 'Injector');
-    W = addWell(W, G, rock, prodCell, ...
+    % Producer – rate control with BHP limit
+    W_prod = addWell([], G, rock, prodCell, ...
         'Type', 'rate', ...
-        'Val', -4.5 * kilogram/day, ...
-        'Sign', -1, ...
+        'Val', q_prod, ...
+        'Sign', -1, ...              % production
+        'components', [0, 1, 0, 0, 0], ... % will be overwritten by reservoir composition
         'Comp_i', [0, 1], ...
-        'components', [0.0, 0.95, 0.05, 0.0, 0.0], ...
         'Name', 'Producer');
+    % Add BHP limit: minimum BHP for producer (if pressure drops below, switch to BHP)
+    W_prod.lims.bhp = 150 * barsa;
 
-    % Define three distinct well configurations for the three stages
-    W_inj  = W;   W_inj(2).val  = 0;                % producer off
-    W_inj(1).status  = true;   W_inj(2).status  = false;                % producer off
-    W_inj(1).name  = 'INJ_1';   W_inj(2).name  = 'PROD_1';                % producer off
-    W_shut = W;   W_shut(1).val = 0; W_shut(2).val = 0;   % both off
-    W_shut(1).status  = false;   W_shut(2).status  = false;                % injection/producer off
-    W_shut(1).name  = 'INJ_2';   W_shut(2).name  = 'PROD_2';                % producer off
-    W_prod = W;   W_prod(1).val = 0;                % injector off
-    W_prod(1).status  = false;   W_prod(2).status  = true;                % producer off
-    W_prod(1).name  = 'INJ_3';   W_prod(2).name  = 'PROD_3';                % producer off
-    %% 7. Create a three‑stage schedule using simpleSchedule + combineSchedules
-    injDays  = 30*day;
-    shutDays = 30*day;
-    prodDays = 30*day;
-    dt       = 1*day;
+    %% 6. Schedule: injection 50 d, shut-in 150 d, production 50 d
+    injDays  = 50 * day;
+    shutDays = 150 * day;
+    prodDays = 50 * day;
 
-    nStepsInj  = ceil(injDays / day);
-    nStepsShut = ceil(shutDays / day);
-    nStepsProd = ceil(prodDays / day);
+    % Timesteps: 1 day during active periods, 5 days during shut-in
+    dt_inj  = 1 * day;
+    dt_shut = 5 * day;
+    dt_prod = 1 * day;
 
-    % Build individual schedules
-    scheduleInj  = simpleSchedule(repmat(dt, nStepsInj, 1),  'W', W_inj);
-    scheduleShut = simpleSchedule(repmat(dt, nStepsShut, 1), 'W', W_shut);
-    scheduleProd = simpleSchedule(repmat(dt, nStepsProd, 1), 'W', W_prod);
+    % Number of time steps
+    nstep_inj  = ceil(injDays / dt_inj);    % 50
+    nstep_shut = ceil(shutDays / dt_shut);  % 30  ← fix here
+    nstep_prod = ceil(prodDays / dt_prod);  % 50
 
-    % Combine them sequentially
+    scheduleInj  = simpleSchedule(repmat(dt_inj,  nstep_inj,  1), 'W', W_inj);
+    W_shut = W_inj;
+    W_shut.val = 0;
+    W_shut.sign = 0;
+    W_shut.status = false;
+    scheduleShut = simpleSchedule(repmat(dt_shut, nstep_shut, 1), 'W', W_shut);
+    scheduleProd = simpleSchedule(repmat(dt_prod, nstep_prod, 1), 'W', W_prod);
+
     schedule = combineSchedules(scheduleInj, scheduleShut, scheduleProd, ...
         'makeConsistent', false);
 
-    % Clean up well limits (usually not needed, but for safety)
+    % Clean up well limits (if any)
     for i = 1:numel(schedule.control)
         for j = 1:numel(schedule.control(i).W)
             schedule.control(i).W(j).lims = [];
+        end
+    end
+    % Re‑apply BHP limit to producer controls (only during production stage)
+    for i = 3:numel(schedule.control)
+        for j = 1:numel(schedule.control(i).W)
+            if strcmp(schedule.control(i).W(j).name, 'Producer')
+                schedule.control(i).W(j).lims.bhp = 150 * barsa;
+            end
         end
     end
 end
