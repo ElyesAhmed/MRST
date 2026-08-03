@@ -74,7 +74,7 @@ classdef TracerDiffusivity < StateFunction
             if isprop(model, 'rock') && isa(model.rock.poro, 'function_handle')
                 [p, nbact] = model.getProps(state, 'pressure', 'nbact');
                 nbactArray = model.extractBactValues(nbact);
-                phi = model.rock.poro(p, nbactArray);
+                phi = model.rock.poro(p, nbactArray{:});
             else
                 phi = model.rock.poro;
             end

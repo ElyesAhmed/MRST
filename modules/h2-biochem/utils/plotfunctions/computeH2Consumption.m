@@ -65,7 +65,7 @@ for t = 1:nSteps
             p = state.pressure;
             n_tilde = getNumeric(state, 'nbact', idxReaction);
             nbactArray = model.extractBactValues(state.nbact);
-            Phi = model.rock.poro(p, nbactArray);
+            Phi = model.rock.poro(p, nbactArray{:});
         else
             Phi = model.rock.poro;
         end

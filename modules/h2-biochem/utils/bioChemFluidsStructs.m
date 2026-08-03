@@ -10,11 +10,11 @@ function db = bioChemFluidsStructs()
 %   pH2O, p2           - Product names
 %   gamrH2, gamrsub,
 %   gampH2O, gamp2     - Stoichiometric coefficients
-%   Y_H2               - Yield coefficient (cells/mol H2)
+%   Y_H2               - Yield scale used by reaction source terms
 %   alphaH2, alphasub  - Half-saturation constants (mol/mol)
 %   Psigrowthmax       - Maximum growth rate (1/s)
 %   bbact              - Decay rate (1/s)
-%   nbactMax           - Maximum cell density (1/m^3)
+%   nbactMax           - Population scale used by reaction source terms
 %   bactdiff           - Microbial diffusion coefficient (m^2/s)
 %   xch_seuil          - Chemotaxis coefficient
 %   Add new reactions by appending additional struct entries following

@@ -14,13 +14,13 @@ classdef BactConvertionRate < StateFunction
     %
     %   The conversion rate for each component c is computed as:
     %
-    %       qbiot(c) = γ_c * (bmass / (ρL * Y_H2))
+    %       qbiot(c) = gamma_norm(c) * PsiGrowthRate * bmass / Y_H2
     %
     %   where:
-    %       γ_c   = Stoichiometric coefficient for component c
-    %       bmass = Bacterial mass concentration [kg/m^3]
-    %       ρL    = Liquid phase density [kg/m^3]
-    %       Y_H2  = Yield coefficient for H2 [kg_biomass/kg_H2]
+    %       gamma_norm = mass-weighted stoichiometric coefficient,
+    %                    normalized by hydrogen and nbactMax
+    %       bmass      = Bacterial mass in the liquid pore volume [kg]
+    %       Y_H2       = Reaction yield scale
     %
     %   The stoichiometric coefficients are normalized by the H2 coefficient
     %   and scaled by the bacterial carrying capacity (nbactMax).
@@ -113,9 +113,9 @@ classdef BactConvertionRate < StateFunction
             psigrowth = model.getProps(state, 'PsiGrowthRate');
 
             % Get model parameters
-            Y_H2 = bcrm.Y_H2;                      % Yield coefficients [kg_biomass/kg_H2]
+            Y_H2 = bcrm.Y_H2;                      % Reaction yield scales
             gamma = rm.gammak;                     % Stoichiometric coefficients (nbioreact x ncomp)
-            nbactMax = bcrm.nbactMax;              % Carrying capacity [cells/m^3]
+            nbactMax = bcrm.nbactMax;              % Population scales
             mc = rm.EOSModel.CompositionalMixture.molarMass;  % Component molar masses [kg/mol]
 
             % Calculate conversion rate for each reactor and component
@@ -161,8 +161,8 @@ classdef BactConvertionRate < StateFunction
                 gamma_norm = nbactMax(i) .* gamma_row .* mc ./ abs(gamma_row(idxH2));
 
                 % Calculate base conversion rate
-                % Direct calculation: qbiot = (pv * S_l * nbact) / Y_H2
-                % Note: Density cancels in (pv * S_l * rho_l * nbact) / (rho_l * Y_H2)
+                % The source is based on microbial mass and the
+                % reaction-specific yield scale.
                 qbase = psigrowth_i .* bmass_i ./ Y_H2(i);
 
                 % For SRB, only a pH/salinity-dependent fraction of the

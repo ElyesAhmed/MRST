@@ -46,7 +46,7 @@ classdef MicrobialChemotaxis < StateFunction
             % Porosity - dynamic (bio-clogging) or static
             if isprop(model, 'rock') && isa(model.rock.poro, 'function_handle')
                 nbactArray = model.extractBactValues(nbact);
-                phi = model.rock.poro(p, nbactArray); % Apply both modifications
+                phi = model.rock.poro(p, nbactArray{:}); % Apply both modifications
             else
                 phi = model.rock.poro;
             end
@@ -80,7 +80,9 @@ classdef MicrobialChemotaxis < StateFunction
                                  'xch_seuil coefficient is zero or negative for species %d. ' ...
                                  'Chemotaxis will be inactive.'], i);
                     end
-                    dN{i} = model.biochemFluid.xch_seuil(i) .* phi .* Voln.*nbacti.*(1.0-nbacti);
+                    populationFraction = max(0, min(nbacti ./ model.bact_maxProp, 1));
+                    dN{i} = model.biochemFluid.xch_seuil(i) .* phi .* Voln .* ...
+                        populationFraction .* (1.0 - populationFraction);
                 else
                     dN{i} = 0;
                 end

@@ -41,8 +41,9 @@ classdef BacterialMass < StateFunction & ComponentProperty
         function mb = evaluateOnDomain(prop, model, state)
             % Compute bacterial mass in each grid cell
             %
-            % Theory: Mass = pore_volume * saturation * concentration
-            % Units: [m³] * [dimensionless] * [kg/m³] = [kg]
+            % Theory: Mass = pore_volume * saturation * liquid_density *
+            % bacterial mass fraction.
+            % Units: [m³] * [dimensionless] * [kg/m³] * [dimensionless] = [kg]
             %
             % PARAMETERS:
             %   prop  - Property function instance
@@ -79,8 +80,8 @@ classdef BacterialMass < StateFunction & ComponentProperty
 
             for i=1:nbioreact
                 % Compute bacterial mass: pv * S_l * rho_l * nbact
-                % where nbact is concentration [kg/m³]
-                % Result: [m³] * [1] * [kg/m³] = [kg]
+                % where nbact is the model's dimensionless bacterial mass
+                % fraction and rhoL converts it to a mass concentration.
                 if iscell(nbact)
                     nbacti=nbact{i};
                 else

@@ -1,55 +1,55 @@
- % aa =2;
- % states = scenarios{aa}.states;
- % ws = scenarios{aa}.ws;
- % model = scenarios{aa}.model;
+ aa =2;
+ states = scenarios{aa}.states;
+ ws = scenarios{aa}.ws;
+ model = scenarios{aa}.model;
 % %schedule = scenarios{aa}.schedule;
 % --- Compute total H₂ injected (excluding discharge and shut periods) ---
 % Define the names of wells/periods to EXCLUDE
 exclude_names = {'discharge', 'shut'};  % adjust as needed
 
-total_injected_H2 = 0;
-for t = 1:length(schedule.step.val)
-    % Get control index for this timestep
-    % ctrl = schedule.step.control(t);
-    % % Get all wells active in this control
-    % wells = schedule.control(ctrl).W;
-    % 
-    % % --- Skip this timestep if any active well has an excluded name ---
-    % skip = false;
-    % for w = 1:numel(wells)
-    %     if any(strcmp(wells(w).name, exclude_names))
-    %         skip = true;
-    %         break;
-    %     end
-    % end
-    % if skip
-    %     continue;
-    % end
-    % 
-    % % --- Now we are in an injection period (no excluded wells) ---
-    % % Find the well(s) that are actually injecting (sign=+1)
-    % % inj_wells = wells([wells.sign] == 1);
-    % % if isempty(inj_wells)
-    % %     continue;  % no injecting well (should not happen)
-    % % end
-    % 
-    % % Get the well solution for this timestep
-    ws_t = ws{t};
-
-    % For each injecting well, extract H₂ mass rate and accumulate
-    % for iw = 1:numel(inj_wells)
-    %     wname = inj_wells(iw).name;
-    %     % Find this well in the well solution by name
-    %     ws_idx = find(strcmp({ws_t.name}, wname), 1);
-    %     if isempty(ws_idx)
-    %         error('Well "%s" not found in well solution at timestep %d', wname, t);
-    %     end
-    H2_mass_rate = sum(ws_t.ComponentTotalFlux(:,idx_H2));
-    dt = schedule.step.val(t);  % seconds
-    total_injected_H2 = [total_injected_H2; (H2_mass_rate / mc_H2) * dt];
-    %end
-end
-fprintf('Total H₂ injected (excluding discharge and shut periods): %.2f mol\n', total_injected_H2);
+% total_injected_H2 = 0;
+% for t = 1:length(schedule.step.val)
+%     % Get control index for this timestep
+%     % ctrl = schedule.step.control(t);
+%     % % Get all wells active in this control
+%     % wells = schedule.control(ctrl).W;
+%     % 
+%     % % --- Skip this timestep if any active well has an excluded name ---
+%     % skip = false;
+%     % for w = 1:numel(wells)
+%     %     if any(strcmp(wells(w).name, exclude_names))
+%     %         skip = true;
+%     %         break;
+%     %     end
+%     % end
+%     % if skip
+%     %     continue;
+%     % end
+%     % 
+%     % % --- Now we are in an injection period (no excluded wells) ---
+%     % % Find the well(s) that are actually injecting (sign=+1)
+%     % % inj_wells = wells([wells.sign] == 1);
+%     % % if isempty(inj_wells)
+%     % %     continue;  % no injecting well (should not happen)
+%     % % end
+%     % 
+%     % % Get the well solution for this timestep
+%     ws_t = ws{t};
+% 
+%     % For each injecting well, extract H₂ mass rate and accumulate
+%     % for iw = 1:numel(inj_wells)
+%     %     wname = inj_wells(iw).name;
+%     %     % Find this well in the well solution by name
+%     %     ws_idx = find(strcmp({ws_t.name}, wname), 1);
+%     %     if isempty(ws_idx)
+%     %         error('Well "%s" not found in well solution at timestep %d', wname, t);
+%     %     end
+%     H2_mass_rate = sum(ws_t.ComponentTotalFlux(:,idx_H2));
+%     dt = schedule.step.val(t);  % seconds
+%     total_injected_H2 = [total_injected_H2; (H2_mass_rate / mc_H2) * dt];
+%     %end
+% end
+% fprintf('Total H₂ injected (excluding discharge and shut periods): %.2f mol\n', total_injected_H2);
 eosNames = model.EOSModel.CompositionalMixture.names;
 idx_H2 = find(strcmp(eosNames, 'H2'));
 mc_H2 = model.EOSModel.CompositionalMixture.molarMass(idx_H2);

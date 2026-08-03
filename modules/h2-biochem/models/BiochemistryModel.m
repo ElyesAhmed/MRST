@@ -41,6 +41,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         bacteriamodel = true;
         sulfateReduction = false;         % SO4/HS aqueous tracers active (set from biochemFluid)
         bact_capProp = 3.0e0;             % Min nbact in the model
+        bact_maxProp = 120;               % Max nbact in the model
         molecularDiffusion = false;
         molecularDispersion = false;
         bactDiffusion = false;            % Microbial diffusion
@@ -77,7 +78,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
             %% Set compositional fluid and EOS
             if isempty(compFluid)
-                if strcmp(model.metabolicReaction, 'MethanogenicArchae')
+                if strcmp(model.biochemFluid.metabolicReaction, 'MethanogenicArchae')
                     compNames = {'Hydrogen', 'Water', 'Nitrogen', 'CarbonDioxide', 'Methane'};
                     compSymbols = {'H2', 'H2O', 'N2', 'CO2', 'C1'};
                     compFluid = TableCompositionalMixture(compNames, compSymbols);
@@ -127,13 +128,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 % Assign dummy transmissibilities to appease
                 % model.setupOperators
                 drock = rock;
-                if nargin(drock.perm)<3
-                    nbact0 = 0;
-                    drock.perm = rock.perm(1*barsa(),nbact0);
-                elseif nargin(drock.perm)==3
-                    nbact0 = [0,0];
-                    drock.perm = rock.perm(1*barsa(),nbact0(1),nbact0(2));
-                end
+                nbact0 = model.getDummyBacterialValues(drock.perm);
+                drock.perm = rock.perm(1*barsa(), nbact0{:});
             end
 
             if model.dynamicFlowPv()
@@ -142,13 +138,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 if ~model.dynamicFlowTrans()
                     drock = rock;
                 end
-                if nargin(drock.poro)<3
-                    nbact0 = 0;
-                    drock.poro = rock.poro(1*barsa(),nbact0);
-                elseif nargin(drock.poro)==3
-                    nbact0 = [0,0];
-                    drock.poro = rock.poro(1*barsa(),nbact0(1),nbact0(2));
-                end
+                nbact0 = model.getDummyBacterialValues(drock.poro);
+                drock.poro = rock.poro(1*barsa(), nbact0{:});
             end
             % Let reservoir model set up operators
             model = setupOperators@ReservoirModel(model, G, drock, varargin{:});
@@ -319,13 +310,13 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     if model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
                         beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
                         % Dirichlet boundary conditions for bacterial diffusion
-                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces);
+                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
                     elseif model.chemotaxisEffect && ~model.bactDiffusion && ~isempty(bflux{i})
                         beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
                     elseif model.bactDiffusion && model.chemotaxisEffect && ~isempty(bflux{i})
                         beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
                         % Dirichlet boundary conditions for bacterial diffusion
-                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces);
+                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
                     else
                         % No diffusion: just accumulation term (pore-scale diffusion only)
                          %beqs{1} = model.operators.AccDiv(beqs{1},0);
@@ -366,16 +357,18 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
         end
 
-        function beqs = addBacterialDiffusionBC(model, beqs, state, forces)
+        function beq = addBacterialDiffusionBC(model, beq, state, forces, species)
             % Add Dirichlet boundary conditions for the bacterial diffusion
             % equation.
             %
             % The prescribed bacterial concentration is carried on the
             % standard boundary-condition struct as the extra field
-            % `bc.nbact` (one value per `bc.face`; use NaN on faces that
-            % should keep the natural no-flux condition). For every face
-            % with a finite `bc.nbact`, the diffusive half-face flux leaving
-            % the adjacent cell is added to the bacterial mass balance:
+            % `bc.nbact`. It may be a vector (applied to every species), a
+            % matrix with one column per species, or a cell array with one
+            % vector per species. Use NaN to retain the natural no-flux
+            % condition. For every finite value, the diffusive half-face
+            % flux leaving the adjacent cell is added to that species'
+            % bacterial mass balance:
             %
             %   J_out(f) = rho_l(c) .* T_bc(f) .* (nbact(c) - nbact_bc(f))
             %
@@ -393,7 +386,18 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
             bc    = forces.bc;
             faces = bc.face(:);
-            val   = bc.nbact(:);
+            if iscell(bc.nbact)
+                val = bc.nbact{species}(:);
+            elseif ~isvector(bc.nbact) || ...
+                    (size(bc.nbact, 1) == 1 && size(bc.nbact, 2) == model.biochemFluid.nbioreact)
+                assert(size(bc.nbact, 2) >= species, ...
+                    'bc.nbact must have one column per bacterial species.');
+                val = bc.nbact(:, species);
+            else
+                val = bc.nbact(:);
+            end
+            assert(numel(val) == numel(faces), ...
+                'bc.nbact must contain one value per boundary-condition face.');
 
             % Keep only faces that carry a finite Dirichlet value
             keep  = isfinite(val);
@@ -419,6 +423,9 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
             % Cell-centred microbial diffusivity D_b = bactdiff*pv*sL
             D = model.getProp(state, 'MicrobialDiffusivity');
+            if iscell(D)
+                D = D{species};
+            end
             if numel(value(D)) == 1
                 % Diffusion disabled / zero -> no boundary contribution
                 return
@@ -435,6 +442,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             end
 
             nbact = model.getProp(state, 'nbact');
+            if iscell(nbact)
+                nbact = nbact{species};
+            else
+                nbact = nbact(:, species);
+            end
 
             % Diffusive flux leaving the adjacent cell (positive = outflow)
             Jout = rhoL(cells) .* T_bc .* (nbact(cells) - val);
@@ -444,7 +456,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             nc   = G.cells.num;
             nf   = numel(cells);
             Scat = sparse(cells, (1:nf)', 1, nc, nf);
-            beqs{1} = beqs{1} + Scat*Jout;
+            beq = beq + Scat*Jout;
         end
 
         function forces = validateDrivingForces(model, forces, varargin)
@@ -772,7 +784,7 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
 
                 % Final capping to physical bounds
-                state = model.capProperty(state, 'nbact', model.bact_capProp, 120);
+                state = model.capProperty(state, 'nbact', model.bact_capProp, model.bact_maxProp);
                 state = model.capProperty(state, 's', 1.0e-8, 1);
                 state.components = ensureMinimumFraction(state.components, model.EOSModel.minimumComposition);
 
@@ -824,6 +836,17 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                     nbactArray{i} = nbact(:, i);
                 end
             end
+        end
+
+        function nbact = getDummyBacterialValues(model, propertyFunction)
+            % Return zero-valued bacterial arguments matching a rock handle.
+            narg = nargin(propertyFunction);
+            if narg < 0
+                nbioreact = model.biochemFluid.nbioreact;
+            else
+                nbioreact = max(narg - 1, 1);
+            end
+            nbact = num2cell(zeros(1, nbioreact));
         end
 
     end

@@ -11,7 +11,8 @@ function [nls, lsolve] = setupOptimizedLinearSolver(model, varargin)
 %                     'high' (with both diffusion & dispersion) [default: 'medium']
 %   solverTolerance - Tolerance for linear solver [default: 1e-4]
 %   maxNonlinIter   - Max nonlinear iterations [default: 15]
-%   cprDamp         - CPR damping factor [default: 0.7]
+%   cprDamp         - Retained for backward-compatible calls; AMGCL CPR
+%                     does not expose this setting.
 %
 % RETURNS:
 %   nls    - NonLinearSolver configured with linear solver
@@ -20,52 +21,43 @@ function [nls, lsolve] = setupOptimizedLinearSolver(model, varargin)
     opt = struct('complexityLevel', 'medium', ...
                  'solverTolerance', 1e-4, ...
                  'maxNonlinIter', 15, ...
-                 'cprDamp', 0.7);
+                 'cprDamp', []);
     opt = merge_options(opt, varargin{:});
 
     % Select base linear solver
     lsolve = selectLinearSolverAD(model);
 
     % Configure AMGCL CPR parameters based on problem complexity
-    amgclSettings = struct();
-    amgclSettings.coarsening = 'aggregation';
-    amgclSettings.aggregation = 'legacy';
-    amgclSettings.maxLvl = 20;
-    amgclSettings.verbosity = 0;
-    amgclSettings.cpr_damp = opt.cprDamp;
+    amgclSettings = struct('max_levels', 20, 'verbose', false);
 
     switch lower(opt.complexityLevel)
         case 'low'
             % Simple advection-only: aggressive coarsening
-            amgclSettings.aggEps = 1e-1;
-            amgclSettings.aggBlockSize = 2;
-            amgclSettings.eps = 1e-2;
-            amgclSettings.maxIter = 50;
-            amgclSettings.cpr_maxIter = 3;
+            amgclSettings.aggr_eps_strong = 1e-1;
+            amgclSettings.maxIterations = 50;
 
         case 'medium'
             % Diffusion included: balanced settings (default)
-            amgclSettings.aggEps = 1e-2;
-            amgclSettings.aggBlockSize = 1;
-            amgclSettings.eps = 1e-3;
-            amgclSettings.maxIter = 100;
-            amgclSettings.cpr_maxIter = 4;
+            amgclSettings.aggr_eps_strong = 1e-2;
+            amgclSettings.maxIterations = 100;
 
         case 'high'
             % Both diffusion & dispersion: conservative coarsening
-            amgclSettings.aggEps = 5e-3;
-            amgclSettings.aggBlockSize = 1;
-            amgclSettings.eps = 5e-4;
-            amgclSettings.maxIter = 150;
-            amgclSettings.cpr_maxIter = 5;
+            amgclSettings.aggr_eps_strong = 5e-3;
+            amgclSettings.maxIterations = 150;
 
         otherwise
             error('Unknown complexityLevel: %s', opt.complexityLevel);
     end
 
-    % Apply AMGCL settings
-    if isprop(lsolve, 'amgclSettings')
-        lsolve.amgclSettings = amgclSettings;
+    % Apply AMGCL settings through the solver's actual configuration
+    % interface. Small systems may use the backslash fallback instead.
+    if isa(lsolve, 'AMGCLSolverAD')
+        lsolve.setCoarsening('aggregation');
+        lsolve.amgcl_setup.max_levels = amgclSettings.max_levels;
+        lsolve.amgcl_setup.verbose = amgclSettings.verbose;
+        lsolve.amgcl_setup.aggr_eps_strong = amgclSettings.aggr_eps_strong;
+        lsolve.maxIterations = amgclSettings.maxIterations;
     end
     lsolve.tolerance = opt.solverTolerance;
 

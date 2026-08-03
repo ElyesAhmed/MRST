@@ -26,12 +26,12 @@ classdef TableBioChemMixture
         gamrsub             % Stoichiometric coefficient for substrate
         gampH2O             % Stoichiometric coefficient for water
         gamp2               % Stoichiometric coefficient for second product
-        Y_H2                % Yield coefficient (cells/mol H2)
+        Y_H2                % Yield scale used by reaction source terms
         alphaH2             % Half-saturation constant for H2 (mol/mol)
         alphasub            % Half‑saturation constant for substrate (mol/mol)
         Psigrowthmax        % Maximum specific growth rate (1/s)
         bbact               % Decay rate constant (1/s)
-        nbactMax            % Maximum microorganism concentration (1/m^3)
+        nbactMax            % Population scale used by reaction source terms
         xch_seuil           % Chemotaxis coefficient
         bactdiff            % microbial diffusion coefficient
     end
