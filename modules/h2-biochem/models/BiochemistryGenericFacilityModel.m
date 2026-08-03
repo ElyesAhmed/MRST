@@ -28,6 +28,9 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
                 ffd = ffd.setStateFunction('PsiGrowthRate', GrowthBactRateSRC(model));
                 ffd = ffd.setStateFunction('PsiDecayRate', DecayBactRateSRC(model));
                 ffd = ffd.setStateFunction('BactConvRate', BactConvertionRate(model));
+                if isprop(rm, 'sulfateReduction') && rm.sulfateReduction
+                    ffd = ffd.setStateFunction('SRBTracerConvRate', SRBTracerConvRate(model));
+                end
                 model.FacilityFlowDiscretization = ffd;
             end
         end
@@ -127,6 +130,50 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
                 src{i} = src_growthdecay{i} + src_well{i};
             end
         end
+        %-----------------------------------------------------------------%
+        function src = getSRBTracerSources(model, fd, state, state0, dt)
+            % Reaction + well-advection source for the SO4/HS aqueous
+            % tracers. Mirrors getBacteriaSources, but for the two
+            % non-volatile species that never enter the EOS/flash.
+            rm = model.ReservoirModel;
+            if isempty(rm) || ~isprop(rm, 'sulfateReduction') || ~rm.sulfateReduction
+                src = {0, 0};
+                return;
+            end
+
+            flowState = fd.buildFlowState(model, state, state0, dt);
+            src_reaction = model.getProps(flowState, 'SRBTracerConvRate');
+
+            % Well tracer source (advective transport, no SO4/HS injected)
+            map = model.getProp(state, 'FacilityWellMapping');
+            src_well = {0, 0};
+            if ~isempty(map.cells)
+                q_ph = model.getProp(state, 'PhaseFlux');
+                L_ix = rm.getLiquidIndex();
+                q_l  = q_ph{L_ix};
+
+                so4 = rm.getProp(state, 'so4');
+                hs  = rm.getProp(state, 'hs');
+                tracers = {so4, hs};
+
+                nc = rm.G.cells.num;
+                nf = numel(map.cells);
+                S  = sparse(map.cells, (1:nf)', 1, nc, nf);
+
+                for i = 1:2
+                    q_tracer = q_l .* tracers{i}(map.cells);
+                    % Injectors: no SO4/HS injected -> set to 0
+                    q_tracer(q_l > 0) = 0;
+                    src_well{i} = S * q_tracer;
+                end
+            end
+
+            src = cell(1, 2);
+            for i = 1:2
+                src{i} = src_reaction{i} + src_well{i};
+            end
+        end
+
         %-----------------------------------------------------------------%
         function [eqs, names, types, state] = getModelEquations(model, state0, state, dt, drivingForces)
             % Return facility equations including parent contributions

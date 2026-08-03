@@ -32,7 +32,6 @@ along with MRST.  If not, see <http://www.gnu.org/licenses/>.
     solver_arg = ['tolerance', opt.tolerance, solver_arg];
     lsolve = BackslashSolverAD();
     ncomp = getComponentCount(model);
-    %ncomp = 7;
     ndof = ncomp*model.G.cells.num;
     if ndof <= opt.BackslashThreshold
         % We do not need a custom linear solver
@@ -47,11 +46,13 @@ along with MRST.  If not, see <http://www.gnu.org/licenses/>.
     if opt.useAMGCLCPR && opt.useAMGCL && opt.useCPR
         % AMGCL CPR
         lsolve = AMGCL_CPRSolverAD('maxIterations', 50,...
-                                   'block_size', ncomp,...
+                                   'block_size', 0,...
                                    'relaxation', 'ilu0', ...
                                    's_relaxation', 'ilu0', ...
                                    solver_arg{:});
-        setSolverOrderingReduction(model, lsolve, ncomp, opt);
+        % CPR determines its cell block size from the assembled equations.
+        % Do not preconfigure ordering from ncomp: models may add cell
+        % variables beyond compositional components (for example biomass).
     elseif opt.useCPR && ~isDiagonal
         % MATLAB CPR + AMGCL, AGMG or backslash for elliptic part
         parg = {'tolerance', 1e-3, 'maxIterations', 25};

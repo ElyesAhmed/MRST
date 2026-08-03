@@ -99,7 +99,7 @@ classdef BactConvertionRate < StateFunction
             % Validate reactor types
             for i = 1:nbioreact
                 rxn = bcrm.metabolicReaction{i};
-                if ~ismember(rxn, {'MethanogenicArchae', 'AcetogenicBacteria'})
+                if ~ismember(rxn, {'MethanogenicArchae', 'AcetogenicBacteria', 'SulfateReducingBacteria'})
                     error('BactConvertionRate:UnsupportedReaction', ...
                         'Unsupported metabolic reaction: %s', rxn);
                 end
@@ -120,16 +120,25 @@ classdef BactConvertionRate < StateFunction
 
             % Calculate conversion rate for each reactor and component
             for i = 1:nbioreact
-                % Find indices for this reactor's H2 and substrate
-                idxH2  = find(strcmpi(compNames, bcrm.rH2{i}), 1);
-                idxsub = find(strcmpi(compNames, bcrm.rsub{i}), 1);
+                rxn = bcrm.metabolicReaction{i};
+                isSRB = strcmp(rxn, 'SulfateReducingBacteria');
 
-                % Validate required components exist
+                % Find indices for this reactor's H2 and substrate
+                idxH2   = find(strcmpi(compNames, bcrm.rH2{i}), 1);
+                idxsub  = find(strcmpi(compNames, bcrm.rsub{i}), 1);
+                idxprod = find(strcmpi(compNames, bcrm.p2{i}), 1);
+
+                % Validate required components exist. For SRB, the
+                % substrate (SO4) and one of the products (HS-) are
+                % non-volatile aqueous tracers, not EOS components (see
+                % BiochemistryModel.sulfateReduction /
+                % SRBTracerConvRate), so they are legitimately absent
+                % from compNames -- only require H2 to be present.
                 if isempty(idxH2)
                     error('BactConvertionRate:MissingH2', ...
                         'Required component H2 (%s) not found for reactor %d', bcrm.rH2{i}, i);
                 end
-                if isempty(idxsub)
+                if isempty(idxsub) && ~isSRB
                     error('BactConvertionRate:MissingSubstrate', ...
                         'Required component substrate (%s) not found for reactor %d', bcrm.rsub{i}, i);
                 end
@@ -156,9 +165,24 @@ classdef BactConvertionRate < StateFunction
                 % Note: Density cancels in (pv * S_l * rho_l * nbact) / (rho_l * Y_H2)
                 qbase = psigrowth_i .* bmass_i ./ Y_H2(i);
 
+                % For SRB, only a pH/salinity-dependent fraction of the
+                % total sulfide produced is volatile H2S; the rest stays
+                % as the HS- aqueous tracer (see SRBTracerConvRate,
+                % which accounts for the complementary (1-f_H2S) part).
+                % Splitting here, at the source term, avoids overwriting
+                % flash mole fractions directly (see the note in
+                % SoreideWhitsonEos.getMixtureFugacityCoefficients).
+                if isSRB && ~isempty(idxprod)
+                    fH2S = rm.EOSModel.fractionH2SVolatile(state.T);
+                end
+
                 % Apply normalized stoichiometric coefficients to each component
                 for c = 1:ncomp
-                    qbiot{c} = qbiot{c} + gamma_norm(c) .* qbase;
+                    contrib = gamma_norm(c) .* qbase;
+                    if isSRB && c == idxprod
+                        contrib = contrib .* fH2S;
+                    end
+                    qbiot{c} = qbiot{c} + contrib;
                 end
             end
         end

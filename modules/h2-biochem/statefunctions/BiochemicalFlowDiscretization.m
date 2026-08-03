@@ -58,6 +58,18 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
                         ChemotaxisTransmissibility(model));
                     props = props.setStateFunction('ChemoBactFlux', ChemotaxisBactFlux(model));
                 end
+
+                if isprop(model, 'sulfateReduction') && model.sulfateReduction
+                    props = props.setStateFunction('SRBTracerConvRate', SRBTracerConvRate(model));
+
+                    if (isprop(model, 'molecularDispersion') && model.molecularDispersion) || ...
+                            (isprop(model, 'molecularDiffusion') && model.molecularDiffusion)
+                        props = props.setStateFunction('TracerDiffusivity', TracerDiffusivity(model));
+                        props = props.setStateFunction('TracerTransmissibility', ...
+                            TracerTransmissibility(model));
+                        props = props.setStateFunction('DiffusiveTracerFlux', DiffusiveTracerFlux(model));
+                    end
+                end
             end
         end
 
@@ -103,6 +115,53 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
             name = model.biochemFluid.bactnames;
             type=cell(1,nbioreact);
             [type{:}] = deal('cell');
+        end
+
+        %-----------------------------------------------------------------%
+        function [acc, tflux, name, type] = tracerConservationEquation(fd, model, state, state0, dt)
+            % Mass conservation for the SO4/HS aqueous tracers.
+            %
+            % Unlike EOS components, SO4 and HS never enter the flash:
+            % they are advected with the liquid phase, using the same
+            % interior Darcy flux/upstream weighting as any other
+            % dissolved species (see PhaseFlux, PhaseUpwindFlag), with no
+            % vapor-phase contribution. When molecularDiffusion and/or
+            % molecularDispersion are enabled, a Fickian flux (see
+            % TracerDiffusivity/DiffusiveTracerFlux) is added on top of
+            % the advective flux, analogous to how those flags affect the
+            % volatile EOS components via ComponentTotalFluxForBio.
+            tracermass  = model.getProp(state, 'AqueousTracerMass');
+            tracermass0 = model.getProp(state0, 'AqueousTracerMass');
+
+            acc = cell(1, 2);
+            for i = 1:2
+                acc{i} = (tracermass{i} - tracermass0{i}) ./ dt;
+            end
+
+            q    = model.getProp(state, 'PhaseFlux');
+            flag = model.getProp(state, 'PhaseUpwindFlag');
+            L_ix = model.getLiquidIndex();
+            qL    = q{L_ix};
+            flagL = flag{L_ix};
+
+            so4 = model.getProp(state, 'so4');
+            hs  = model.getProp(state, 'hs');
+            c   = {so4, hs};
+
+            tflux = cell(1, 2);
+            for i = 1:2
+                tflux{i} = model.operators.faceUpstr(flagL, c{i}) .* qL;
+            end
+
+            if model.molecularDispersion || model.molecularDiffusion
+                Jdiff = model.getProp(state, 'DiffusiveTracerFlux');
+                for i = 1:2
+                    tflux{i} = tflux{i} + Jdiff{i};
+                end
+            end
+
+            name = {'SO4', 'HS'};
+            type = {'cell', 'cell'};
         end
 
         %-----------------------------------------------------------------%

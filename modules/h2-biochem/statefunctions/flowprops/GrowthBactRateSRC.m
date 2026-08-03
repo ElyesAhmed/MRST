@@ -5,126 +5,109 @@ classdef GrowthBactRateSRC < StateFunction
     %   gr = GrowthBactRateSRC(model, 'property1', value1, ...)
     %
     % DESCRIPTION:
-    %   Computes the bacterial growth rate in each grid cell based on:
-    %   - H2 and CO2 concentrations (Monod kinetics)
-    %   - Bacterial population density
-    %   - Liquid phase saturation and density
-    %   - Pore volume
+    %   Computes the specific growth rate coefficient (kinetic term only)
+    %   for each microbial population using Monod kinetics.
     %
-    % REQUIRED PARAMETERS:
-    %   model - Reservoir model with bacterial modeling enabled
-    %
-    % OPTIONAL PARAMETERS:
-    %   None
-    %
-    % RETURNS:
-    %   Class instance ready for use in simulation
-    %
-    % SEE ALSO:
-    %   CompositionalModel, EquationsCompositional
+    %   For methanogens and acetogens, H2 and CO2 are taken from the
+    %   liquid-phase EOS composition (x). For sulfate reducers (SRB),
+    %   the substrate SO4 is taken from the aqueous tracer `tracerSO4`
+    %   and converted to mole fraction using the liquid molar density.
 
     properties
-        % No additional properties needed
+        % No additional properties
     end
 
     methods
         function gp = GrowthBactRateSRC(model, varargin)
-            % Constructor for bacterial growth rate calculator
-
-            % Initialize base class
+            % Constructor
             gp@StateFunction(model, varargin{:});
-
-            % Declare dependencies - kinetic term only (no mass, volume, saturation)
-            gp = gp.dependsOn('x', 'state');        % Mole fractions for Monod kinetics
-
-            gp.label = '\Psi_{growth}'; % LaTeX-style label
+            gp = gp.dependsOn('x', 'state');
+            % If SRB is active, we need the tracer and liquid Z-factor
+            if isprop(model, 'sulfateReduction') && model.sulfateReduction
+                gp = gp.dependsOn('tracerSO4', 'state');
+                gp = gp.dependsOn('Z_L', 'state');
+            end
+            gp.label = '\Psi_{growth}';
         end
 
         function Psigrowth = evaluateOnDomain(prop, model, state)
-            % Compute specific growth rate coefficient (kinetic term only)
+            % Compute specific growth rate coefficient [1/s]
             %
             % Returns: Psigrowthmax * axH2 * axsub [1/s]
             % Used with BacterialMass: source = Psigrowth * BacterialMass
-            %
-            % PARAMETERS:
-            %   prop  - Property function instance
-            %   model - Reservoir model instance
-            %   state - State struct containing fields
-            %
-            % RETURNS:
-            %   Psigrowth - Specific growth rate coefficient [1/s]
 
-            % Get component names and indices
             rm = model.ReservoirModel;
-            bcrm=rm.biochemFluid;
+            bcrm = rm.biochemFluid;
             namecp = rm.getComponentNames();
-            nbioreact=bcrm.nbioreact;
+            nbioreact = bcrm.nbioreact;
 
-            % Initialize with zero growth rate
-            Psigrowth=cell(1,nbioreact);
+            % Initialize output
+            Psigrowth = cell(1, nbioreact);
             [Psigrowth{:}] = deal(0);
 
-            % Check if bacterial modeling is active and components exist
-            for i=1:nbioreact
-                idx_H2 = find(strcmpi(namecp, bcrm.rH2(i)), 1);     % Case-insensitive search
-                idx_sub = find(strcmpi(namecp, bcrm.rsub(i)), 1);   % Case-insensitive search
-
-                if strcmp(bcrm.metabolicReaction(i), 'MethanogenicArchae') || ...
-                        strcmp(bcrm.metabolicReaction(i), 'AcetogenicBacteria')
-                    if ~(~isempty(idx_H2) && ~isempty(idx_sub))
-                        % Required components not found; return zero growth
-                        return;
-                    end
-                end
-            end
-
-            % Get required properties
+            % Get liquid mole fractions (EOS components)
             x = rm.getProp(state, 'x');
 
-            % Extract liquid phase component mole fractions
-            for i=1:nbioreact
-                idx_H2 = find(strcmpi(namecp, bcrm.rH2(i)), 1);     % Case-insensitive search
-                idx_sub = find(strcmpi(namecp, bcrm.rsub(i)), 1);   % Case-insensitive search
-                % Extract liquid phase component mole fractions
+            % Loop over reactions
+            for i = 1:nbioreact
+                % Find H2 index (required for all reactions)
+                idx_H2 = find(strcmpi(namecp, bcrm.rH2(i)), 1);
+                if isempty(idx_H2)
+                    continue;   % H2 not found – skip this reaction
+                end
+                % H2 mole fraction
                 if iscell(x)
                     xH2 = x{idx_H2};
-                    xsub = x{idx_sub};
                 else
                     xH2 = x(:, idx_H2);
-                    xsub = x(:, idx_sub);
                 end
 
-                % Get growth parameters
+                % Handle substrate depending on reaction type
+                if strcmp(bcrm.metabolicReaction(i), 'SulfateReducingBacteria')
+                    % SRB: substrate is sulfate tracer (not in EOS)
+                    if isfield(state, 'tracerSO4')
+                        so4_conc = state.tracerSO4;   % mol/m3 liquid
+                    else
+                        so4_conc = zeros(size(xH2));
+                    end
+                    % Compute liquid molar density from Z_L
+                    if isfield(state, 'Z_L')
+                        Z_L = state.Z_L;
+                    else
+                        Z_L = ones(size(xH2));
+                    end
+                    R = 8.314;   % Pa·m3/(mol·K)
+                    % pressure, T may be ADI objects; use value() if needed
+                    P = state.pressure;
+                    T = state.T;
+                    rho_molar = P ./ (Z_L .* R .* T);   % mol/m3
+                    % Convert tracer to mole fraction
+                    xsub = so4_conc ./ rho_molar;
+                    % Use the half‑saturation constant for sulfate (already in mol/mol)
+                    alphasub = bcrm.alphasub(i);
+                else
+                    % Methanogens and acetogens: substrate is an EOS component
+                    idx_sub = find(strcmpi(namecp, bcrm.rsub(i)), 1);
+                    if isempty(idx_sub)
+                        continue;
+                    end
+                    if iscell(x)
+                        xsub = x{idx_sub};
+                    else
+                        xsub = x(:, idx_sub);
+                    end
+                    alphasub = bcrm.alphasub(i);
+                end
+
+                % Now compute Monod terms
                 alphaH2 = bcrm.alphaH2(i);
-                alphasub = bcrm.alphasub(i);
                 Psigrowthmax = bcrm.Psigrowthmax(i);
 
-                % Calculate Monod kinetics: growth rate coefficient (1/s)
                 axH2 = xH2 ./ (alphaH2 + xH2);
                 axsub = xsub ./ (alphasub + xsub);
 
-                % Specific growth rate (kinetic term only; scaling by BacterialMass in flow)
                 Psigrowth{i} = Psigrowthmax .* axH2 .* axsub;
             end
         end
     end
 end
-
-%{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
-
-This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
-
-MRST is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-MRST is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with MRST.  If not, see <http://www.gnu.org/licenses/>.
-%}

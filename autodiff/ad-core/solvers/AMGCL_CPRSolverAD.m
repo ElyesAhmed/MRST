@@ -96,6 +96,8 @@ classdef AMGCL_CPRSolverAD < AMGCLSolverAD
                isCell = problem.indexOfType('cell');
                solver.amgcl_setup.block_size = sum(nv(isCell)/n);
            end
+           assert(solver.amgcl_setup.block_size == floor(solver.amgcl_setup.block_size), ...
+               'CPR block size must be an integer number of cell variables.');
            solver.amgcl_setup.cell_num = model.G.cells.num;
            solver.amgcl_setup.cell_size = n;
 
@@ -125,6 +127,12 @@ classdef AMGCL_CPRSolverAD < AMGCLSolverAD
            end
            m = solver.amgcl_setup.block_size;
            assert(m > 0);
+           % The AMGCL MEX only instantiates block-CPR solvers for block
+           % sizes 2 through 10. Use the scalar second-stage solver for
+           % larger cell blocks while retaining the full CPR block layout.
+           if m > 10 && solver.amgcl_setup.cpr_blocksolver
+               solver.amgcl_setup.cpr_blocksolver = false;
+           end
 
            if isempty(solver.keepNumber)
                if solver.reduceToCell
@@ -198,7 +206,12 @@ classdef AMGCL_CPRSolverAD < AMGCLSolverAD
             end
             bz = solver.amgcl_setup.block_size;
             nc = solver.amgcl_setup.cell_size;
-            psub = (1:bz:(nc*bz - bz + 1))';
+            ncellDof = bz*nc;
+            assert(size(A, 1) >= ncellDof && size(A, 2) >= ncellDof, ...
+                ['CPR block size (%d) and cell count (%d) require %d cell degrees of freedom, ' ...
+                 'but the linear system is %d-by-%d.'], ...
+                bz, nc, ncellDof, size(A, 1), size(A, 2));
+            psub = (1:bz:ncellDof)';
 
             if solver.applyLeftDiagonalScaling || solver.applyRightDiagonalScaling
                 [A, b, scaling, x0] = applyScaling@LinearSolverAD(solver, A, b, x0);

@@ -39,7 +39,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         % Physical quantities and bounds
         gammak   = [];                    % Stoichiometric coefficients
         bacteriamodel = true;
-        bact_capProp = 3.0e-6;             % Min nbact in the model
+        sulfateReduction = false;         % SO4/HS aqueous tracers active (set from biochemFluid)
+        bact_capProp = 3.0e0;             % Min nbact in the model
         molecularDiffusion = false;
         molecularDispersion = false;
         bactDiffusion = false;            % Microbial diffusion
@@ -68,6 +69,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 biochemFluid=TableBioChemMixture({'MethanogenicArchae'},{'bactM'});
             end
             model.biochemFluid=biochemFluid;
+            % SO4 and HS are non-volatile: when the SRB reaction is
+            % present they are carried as aqueous tracers (advected with
+            % the liquid phase, reacted via SRBTracerConvRate), never as
+            % EOS/CompositionalMixture components.
+            model.sulfateReduction = any(strcmp(model.biochemFluid.metabolicReaction, 'SulfateReducingBacteria'));
 
             %% Set compositional fluid and EOS
             if isempty(compFluid)
@@ -177,6 +183,10 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
                 % Register bacterial mass as cell property (not a source term)
                 pvtprops = pvtprops.setStateFunction('BacterialMass', BacterialMass(model));
+
+                if model.sulfateReduction
+                    pvtprops = pvtprops.setStateFunction('AqueousTracerMass', AqueousTracerMass(model));
+                end
             end
 
             pvt = pvtprops.getRegionPVT(model);
@@ -197,6 +207,23 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             if model.bacteriamodel && ~isfield(state, 'nbact')
                 nbact0 = 1e6;
                 state.nbact = repmat(nbact0, model.G.cells.num, 1);
+            end
+            if model.sulfateReduction
+                if ~isfield(state, 'tracerSO4')
+                    state.tracerSO4 = zeros(model.G.cells.num, 1);
+                end
+                if ~isfield(state, 'tracerHS')
+                    state.tracerHS = zeros(model.G.cells.num, 1);
+                end
+                if ~isfield(state, 'h2sDissolvedLag')
+                    % Lagged (previous converged timestep) dissolved H2S
+                    % concentration [mol/m3 liquid], used only to avoid a
+                    % circular dependency between the flash (needs
+                    % msalt) and the flash-derived H2S content when
+                    % feeding total sulfide to the EOS -- see
+                    % initStateAD/updateAfterConvergence.
+                    state.h2sDissolvedLag = zeros(model.G.cells.num, 1);
+                end
             end
         end
 
@@ -220,6 +247,12 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 bactnames = model.biochemFluid.bactnames;
                 names = [{'pressure'}, cnames(2:end), bactnames, enames];
                 vars  = [p, z(2:end), nbact, evars];
+                if model.sulfateReduction
+                    so4 = model.getProp(state, 'so4');
+                    hs  = model.getProp(state, 'hs');
+                    names = [names, {'SO4', 'HS'}];
+                    vars  = [vars, {so4, hs}];
+                end
             else
                 names = [{'pressure'}, cnames(2:end), enames];
                 vars  = [p, z(2:end), evars];
@@ -299,6 +332,22 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     end
 
                     beqs{i} = beqs{i} - src_growthdecay{i};
+                end
+
+                if model.sulfateReduction
+                    % SO4/HS aqueous tracer mass balance: pure advection
+                    % with the liquid phase plus SRB reaction source, no
+                    % EOS/flash coupling (see SoreideWhitsonEos and
+                    % SRBTracerConvRate).
+                    [tacc, tflux, tnames, ttypes] = model.FlowDiscretization.tracerConservationEquation(model, state, state0, dt);
+                    src_tracer = model.FacilityModel.getSRBTracerSources(fd, state, state0, dt);
+                    for i = 1:2
+                        tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
+                        tacc{i} = tacc{i} - src_tracer{i};
+                    end
+                    beqs  = [beqs, tacc];
+                    bnames = [bnames, tnames];
+                    btypes = [btypes, ttypes];
                 end
             else
                 [beqs, bnames, btypes] = deal([]);
@@ -425,6 +474,17 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 end
                 state = model.setProp(state, 'nbact', nbact);
 
+                if model.sulfateReduction
+                    isSO4 = strcmp(names, 'SO4');
+                    isHS  = strcmp(names, 'HS');
+                    so4 = vars{isSO4};
+                    hs  = vars{isHS};
+                    removed(isSO4) = true;
+                    removed(isHS)  = true;
+                    state = model.setProp(state, 'so4', so4);
+                    state = model.setProp(state, 'hs', hs);
+                end
+
                 cnames = model.EOSModel.getComponentNames();
                 ncomp = numel(cnames);
                 z = cell(1, ncomp);
@@ -442,7 +502,24 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 end
                 z{fill} = z_end;
                 state = model.setProp(state, 'components', z);
+
                 if isAD
+                    if model.sulfateReduction
+                        % Refresh the EOS's salinity/H2S-speciation
+                        % coupling from the CURRENT iterate's SO4/HS
+                        % tracers before flashing (model is a value
+                        % class, so this update only needs to survive for
+                        % the getPhaseFractionAsADI call below -- it is
+                        % redone every Newton iteration from state, not
+                        % cached). Total dissolved sulfide uses the
+                        % previous converged timestep's H2S(aq) content
+                        % (state.h2sDissolvedLag, set in
+                        % updateAfterConvergence) to avoid a circular
+                        % dependency between the flash and its own
+                        % output.
+                        model.EOSModel = model.EOSModel.enablesrb_coupling(...
+                            value(so4), value(hs), value(hs) + state.h2sDissolvedLag, state.T);
+                    end
                     [state.x, state.y, state.L, state.FractionalDerivatives] = ...
                         model.EOSModel.getPhaseFractionAsADI(state, state.pressure, state.T, state.components);
                 end
@@ -575,7 +652,12 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 for i=1:nbioreact
                     ix = strcmpi(names, model.biochemFluid.bactnames{i});
                     if any(ix)
-                        scaleChemistry = dt./max(chemistry, dt);
+                        if iscell(chemistry)
+                            chemistry_i = chemistry{i};
+                        else
+                            chemistry_i = chemistry(:, i);
+                        end
+                        scaleChemistry = dt./max(chemistry_i, dt);
                         scaleChemistry = filloutliers(scaleChemistry, "nearest","mean");
                         scale{ix} = scaleChemistry;
                     end
@@ -594,6 +676,12 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 case {'nbact', 'bacteriamodel'} %Bacteria model
                     index = ':';
                     fn = 'nbact';
+                case  {'so4', 'tracerSO4'} % SO4 aqueous tracer (non-volatile, outside the EOS)
+                    index = ':';
+                    fn = 'tracerSO4';
+                case {'hs', 'tracerHS'} % HS aqueous tracer (non-volatile, outside the EOS)
+                    index = ':';
+                    fn = 'tracerHS';
                 otherwise
                     bactnames = model.biochemFluid.bactnames;
                     sub = strcmpi(bactnames, name);
@@ -615,6 +703,28 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
+            if model.sulfateReduction
+                % Cache the converged dissolved-H2S concentration
+                % [mol/m3 liquid] for use as the (lagged) total-sulfide
+                % input to the EOS salinity coupling next timestep -- see
+                % initStateAD. This avoids a circular dependency between
+                % the flash (needs total sulfide -> msalt) and its own
+                % output (dissolved H2S).
+                names = model.EOSModel.CompositionalMixture.names;
+                indH2S = find(strcmp(names, 'H2S'), 1);
+                if ~isempty(indH2S)
+                    x = value(state.x);
+                    if iscell(x)
+                        xH2S = x{indH2S};
+                    else
+                        xH2S = x(:, indH2S);
+                    end
+                    propmodel = model.EOSModel.PropertyModel;
+                    rhoL_molar = propmodel.computeMolarDensity(model.EOSModel, ...
+                        value(state.pressure), value(state.x), value(state.Z_L), state.T, true);
+                    state.h2sDissolvedLag = value(rhoL_molar) .* xH2S;
+                end
+            end
         end
 
         function [state, report] = updateState(model, state, problem, dz, drivingForces)
@@ -665,6 +775,11 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 state = model.capProperty(state, 'nbact', model.bact_capProp, 120);
                 state = model.capProperty(state, 's', 1.0e-8, 1);
                 state.components = ensureMinimumFraction(state.components, model.EOSModel.minimumComposition);
+
+                if model.sulfateReduction
+                    state = model.capProperty(state, 'so4', 0);
+                    state = model.capProperty(state, 'hs', 0);
+                end
             else
                 [state, report] = updateState@GenericOverallCompositionModel(model, state, problem, dz, drivingForces);
             end

@@ -23,6 +23,26 @@ classdef SoreideWhitsonEos < EquationOfStateModel
 
     properties
         msalt = 0.0; % Salt molality for Soreide-Whitson EoS
+
+        % --- Sulfate reduction coupling parameters ---
+        pH             = 7.2;    % pH of the system
+        initial_NaCl   = 2.0;    % Initial NaCl molality (mol/kg)
+        initial_SO4    = 0.5;    % Initial sulfate molality (mol/kg)
+        rho_water      = 1000;   % Water density (kg/m3)
+        pKa_H2S        = 6.98;   % pKa of H2S at 25°C
+        pKa_T_coef     = -0.013; % Temperature correction for pKa (1/K).
+                                 % pKa1 of H2S DECREASES with temperature
+                                 % (Millero et al. 1988; Barbero et al.
+                                 % 1982 report ~-0.011 to -0.015 per degC
+                                 % near 25C), so this must be negative.
+        pKa_sal_coef   = 0.1;    % Salinity correction for pKa (1/(mol/kg))
+
+        % --- SRB coupling state (internal) ---
+        srb_enabled    = false;
+        srb_so4_conc   = [];
+        srb_hs_conc    = [];
+        srb_total_s    = [];
+        srb_t          = [];
     end
 
     methods
@@ -38,6 +58,28 @@ classdef SoreideWhitsonEos < EquationOfStateModel
         end
 
         function [Si_L, Si_V, A_L, A_V, B_L, B_V, Bi] = getMixtureFugacityCoefficients(model, P, T, x, y, acf)
+
+            % For SRB auto-coupling: update msalt from the current SO4/HS
+            % state. This only changes an EOS parameter (msalt), so it is
+            % safe to apply unconditionally on every call, including the
+            % trial-composition evaluations made during phase stability
+            % testing.
+            %
+            % Do NOT also override x/y here (as a previous version did):
+            % x/y are trial mole fractions being iterated on by the
+            % stability/flash solver (see phaseStabilityTest.m
+            % checkStability), not the feed composition. Forcing one
+            % entry to an externally computed value on every call breaks
+            % the mole-fraction simplex constraint (the rest of the
+            % vector is never renormalized) and removes the very unknown
+            % the fixed-point iteration is solving for, so it never
+            % converges -- this is what was causing the "Stability test
+            % did not converge" warnings and the slowdown once SRB
+            % coupling was actually enabled. H2S speciation belongs on
+            % the feed z, applied once before flash, not here.
+            if model.srb_enabled
+                model = model.updateSalinityFromSRB();
+            end
             % For Soreide-Whitson, use H2O-corrected mixing for liquid
             % and standard PR mixing for vapor
             [A_ij, Bi] = model.getMixingParametersH2O(P, T, acf, iscell(x));
@@ -118,10 +160,10 @@ classdef SoreideWhitsonEos < EquationOfStateModel
             [Pr, Tr] = model.getReducedPT(P, T, useCell);
 
             mSalt = model.msalt;
-            coef_msalt = mSalt^1.1;
+            coef_msalt = mSalt.^1.1;
             namecomp = model.CompositionalMixture.names;
-            indH2O = find(strcmp(namecomp, 'H2O'));
 
+            indH2O = find(strcmp(namecomp, 'Water') | strcmp(namecomp, 'H2O'), 1);
             if useCell
                 [sAi, Bi] = deal(cell(1, ncomp));
                 [oA, oB] = deal(cell(1, ncomp));
@@ -153,8 +195,8 @@ classdef SoreideWhitsonEos < EquationOfStateModel
                 oA(:, indH2O) = model.omegaA.*tmp1;
             end
 
-            bic = model.getBinaryInteractionLiquidWater(T, mSalt);
-
+            % Use the current salinity stored in the model
+            bic = model.getBinaryInteractionLiquidWater(T, model.msalt);
             if useCell
                 A_ij = cell(ncomp, ncomp);
                 for i = 1:ncomp
@@ -327,6 +369,92 @@ classdef SoreideWhitsonEos < EquationOfStateModel
                 end
             end
         end
+
+        function model = setSalinity(model, msalt_new)
+            % Update the salt molality used by the EOS dynamically.
+            % This allows the bio module to change salinity over time.
+            model.msalt = msalt_new;
+        end
+
+        function model = enablesrb_coupling(model, so4_conc, hs_conc, total_sulfide, T)
+            % Enable automatic SRB coupling.
+            %
+            % so4_conc, hs_conc, total_sulfide are aqueous-phase molar
+            % concentrations [mol/m3 of liquid], as carried by the
+            % SO4/HS aqueous tracers -- NOT EOS mole fractions and NOT
+            % EOS components. SO4^2- and HS- are non-volatile and must
+            % never be added to the CompositionalMixture/flash; they are
+            % transported and reacted outside the EOS (see
+            % BiochemistryModel primary variables 'SO4'/'HS' and
+            % SRBTracerConvRate) and only enter the EOS here, as a
+            % salinity/speciation correction.
+            %
+            % Call once per Newton iteration (from
+            % BiochemistryModel.initStateAD, right before the flash),
+            % not just once at setup -- msalt must track the current
+            % SO4/HS state, not the initial one.
+            model.srb_so4_conc = so4_conc;
+            model.srb_hs_conc = hs_conc;
+            model.srb_total_s = total_sulfide;
+            model.srb_t = T;
+            model.srb_enabled = true;
+        end
+
+        function model = disablesrb_coupling(model)
+            model.srb_enabled = false;
+        end
+
+        function model = updateSalinityFromSRB(model)
+            % Internal: compute msalt from SRB concentrations.
+            %
+            % msalt must stay a SCALAR: getMixingParametersH2O/
+            % getBinaryInteractionLiquidWater are called from
+            % phaseStabilityTest with P/T/acf subsetted to whichever
+            % cells are still "active" in the fixed-point iteration (a
+            % size that shrinks as cells converge, and does not
+            % generally match model.G.cells.num). A per-cell msalt vector
+            % cannot be safely paired against those subsetted arrays.
+            % Average over cells here (once, at the source) instead of
+            % letting a per-cell vector leak into the EOS math.
+            so4_molal = model.srb_so4_conc / model.rho_water;
+            hs_molal  = model.srb_hs_conc / model.rho_water;
+            msalt_new = model.initial_NaCl + (model.initial_SO4 - so4_molal) + hs_molal;
+            msalt_new = mean(msalt_new(:));
+            % Clamp to a physically valid brine range. The upper bound
+            % also protects the H2O alpha function in
+            % getMixingParametersH2O, whose (1 - 0.0103*msalt^1.1) term
+            % changes sign above msalt ~ 91 mol/kg and would otherwise
+            % produce an unphysical (negative) alpha and break the EOS.
+            % 6.15 mol/kg is approximately the NaCl saturation molality.
+            msalt_new = min(6.15, max(0.001, msalt_new));
+            model.msalt = msalt_new;
+        end
+
+        function f_H2S = fractionH2SVolatile(model, T)
+            % Henderson-Hasselbalch speciation fraction of total dissolved
+            % sulfide (H2S(aq) + HS-) that is present as volatile,
+            % molecular H2S at the given temperature, the model's current
+            % pH and salinity.
+            %
+            % This is the split point between the two non-volatile
+            % sulfide species handled outside the EOS (SO4^2- and HS-,
+            % tracked as aqueous tracers by the calling reservoir model,
+            % see BiochemistryModel/SRBTracerConvRate) and the volatile
+            % H2S EOS component: reaction source terms should route
+            % f_H2S of the sulfide produced into the H2S component mass
+            % balance, and (1 - f_H2S) into the HS- tracer mass balance.
+            %
+            % Do NOT use this to overwrite x/y mole fractions directly
+            % (see the note in getMixtureFugacityCoefficients) -- that
+            % breaks the flash/stability solver. Apply the split at the
+            % source term instead.
+            pKa = model.pKa_H2S + model.pKa_T_coef * (T - 273.15) + ...
+                model.pKa_sal_coef * model.msalt;
+            Ka = 10.^(-pKa);
+            H_conc = 10^(-model.pH);
+            f_H2S = 1./(1 + Ka./H_conc);
+        end
+
     end
 end
 
