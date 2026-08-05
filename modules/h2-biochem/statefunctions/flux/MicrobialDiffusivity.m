@@ -71,7 +71,7 @@ classdef MicrobialDiffusivity < StateFunction
                     sL = s(:, L_ix);
                 end
 
-                Voln = max(sL, 1.0e-8);
+                Voln = max(sL, 0);
 
                 % Effective microbial diffusivity
                 if model.bactDiffusion

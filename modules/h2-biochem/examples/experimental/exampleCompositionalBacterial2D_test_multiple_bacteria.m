@@ -143,16 +143,17 @@ title('Permeability (log10)'); axis off tight;
 sgtitle('2D Dome-Shaped Aquifer with 3 Reactions');
 
 %% Initialize solvers
-nls = NonLinearSolver();
-lsolve = selectLinearSolverAD(modelWithClog);
-nls.LinearSolver = lsolve;
+[nls,~] = setupOptimizedLinearSolver(modelWithClog, 'complexityLevel', 'high', ...
+    'solverTolerance', 1e-3, ...
+    'maxNonlinIter', 10, ...
+    'cprDamp', []);
 
 %% Pack and run simulations
 % --- Scenario 1: With bacteria and bio-clogging
 caseNameWithClogging = [baseName '_WITH_CLOGGING'];
 % Enable clogging
 problemWithClogging = packSimulationProblem(state0, modelWithClog, schedule, caseNameWithClogging, 'NonLinearSolver', nls);
-simulatePackedProblem(problemWithClogging);
+simulatePackedProblem(problemWithClogging,'RestartStep',1);
 
 % --- Scenario 2: With bacteria but without clogging
 caseNameNoClogging = [baseName '_NO_CLOGGING_DIFF__DISP'];
@@ -169,7 +170,10 @@ state0NoBact = initCompositionalState(modelNoBact, state0.pressure, T0, state0.s
 % AMGCL retains its inferred cell block size. The abiotic model has a
 % different primary-variable layout, so it needs a separate solver.
 nlsNoBact = NonLinearSolver();
-nlsNoBact.LinearSolver = selectLinearSolverAD(modelNoBact);
+[nls,lsolve] = setupOptimizedLinearSolver(modelNoBact, 'complexityLevel', 'high', ...
+    'solverTolerance', 1e-3, ...
+    'maxNonlinIter', 10, ...
+    'cprDamp', []);
 problemNoBact = packSimulationProblem(state0NoBact, modelNoBact, schedule, caseNameNoBact, 'NonLinearSolver', nlsNoBact);
 simulatePackedProblem(problemNoBact);
 

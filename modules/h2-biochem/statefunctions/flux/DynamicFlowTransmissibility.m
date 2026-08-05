@@ -24,6 +24,7 @@ classdef DynamicFlowTransmissibility < StateFunction
     properties
         harmonicAvgOperator    % Function handle for harmonic averaging
         twoPointOperator       % Function handle for two-point approximation
+        faceHalfFaceMap        % Maps half-faces to faces for zero-conductivity handling
         conductivity_name      % Name of conductivity property to use
     end
 
@@ -42,6 +43,7 @@ classdef DynamicFlowTransmissibility < StateFunction
             % Set up operators
             dt.twoPointOperator    = getTwoPointOperator(model.G);
             dt.harmonicAvgOperator = getHarmonicAvgOperator(model.G);
+            dt.faceHalfFaceMap     = getFaceHalfFaceMap(model.G);
             dt.conductivity_name   = conductivity_name;
 
             % Declare dependencies
@@ -105,8 +107,20 @@ classdef DynamicFlowTransmissibility < StateFunction
             % Apply two-point flux approximation
             T = prop.twoPointOperator(lambda);
 
-            % Apply harmonic averaging
+            % A zero half-face conductivity disconnects its face. Mask it
+            % before the reciprocal harmonic average, then restore an
+            % exact zero face transmissibility (including its Jacobian).
+            zeroHalfFace = value(T) == 0;
+            if any(zeroHalfFace)
+                T = T + zeroHalfFace;
+            end
+
             T = prop.harmonicAvgOperator(T);
+
+            zeroFace = full(prop.faceHalfFaceMap*double(zeroHalfFace)) > 0;
+            if any(zeroFace)
+                T = T.*(~zeroFace);
+            end
 
             % Ensure positive transmissibility
             T = abs(T);
@@ -153,6 +167,11 @@ function ha = getHarmonicAvgOperator(G)
 faces = G.cells.faces(:,1);
 M = sparse(faces, 1:numel(faces), 1, G.faces.num, numel(faces));
 ha = @(T) 1./(M*(1./T));
+end
+
+function M = getFaceHalfFaceMap(G)
+faces = G.cells.faces(:,1);
+M = sparse(faces, 1:numel(faces), 1, G.faces.num, numel(faces));
 end
 
 %{

@@ -60,7 +60,7 @@ classdef MicrobialChemotaxis < StateFunction
                 sL = s(:, L_ix);
             end
 
-            Voln = max(sL, 1.0e-8);
+            Voln = max(sL, 0);
 
             % Initialize with zero growth rate
             dN=cell(1,nbioreact);

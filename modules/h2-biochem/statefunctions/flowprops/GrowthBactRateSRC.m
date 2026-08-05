@@ -36,7 +36,11 @@ classdef GrowthBactRateSRC < StateFunction
             % Returns: Psigrowthmax * axH2 * axsub [1/s]
             % Used with BacterialMass: source = Psigrowth * BacterialMass
 
-            rm = model.ReservoirModel;
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            else
+                rm = model;
+            end
             bcrm = rm.biochemFluid;
             namecp = rm.getComponentNames();
             nbioreact = bcrm.nbioreact;

@@ -144,9 +144,6 @@ classdef DispersiveDiffusivity < StateFunction
             end
             phi = max(phi, d.minPorosity);
 
-            % --- Get mole fractions ------------------------------------------
-            [xc, yc] = localGetMoleFractions(model, state);
-
             % --- Pre-compute mechanical dispersion (phase-only) ---------------
             % D_disp{ph} computed ONCE per phase, not per component
             D_disp_ph = cell(nph, 1);
@@ -168,13 +165,13 @@ classdef DispersiveDiffusivity < StateFunction
                 % Compute dispersion for each phase (ONCE)
                 for ph = 1:nph
                     u_face = ifcell(phase_flux, ph);
-                    nfac = G.faces.num;
-                    u_face_all = zeros(nfac, 1);
-                    u_face_all(op.internalConn) = value(u_face);
+                    internalFaces = find(op.internalConn);
+                    internalFaceMap = sparse(internalFaces, ...
+                        1:numel(internalFaces), 1, G.faces.num, ...
+                        numel(internalFaces));
+                    u_face_all = internalFaceMap*u_face;
 
-                    % Convert to cell-based velocity
-                    v = faceFlux2cellVelocity(G, u_face_all);
-                    v_mag = sqrt(sum(v.^2, 2));
+                    v_mag = faceFlux2cellSpeed(G, u_face_all);
 
                     % Isotropic dispersive diffusivity (Scheidegger)
                     % D_disp = aL*|v| for longitudinal
@@ -207,7 +204,7 @@ classdef DispersiveDiffusivity < StateFunction
                 D_disp = D_disp_ph{ph};
 
                 % >>> Molecular Diffusion (component-dependent) <<<
-                if model.molecularDiffusion
+                if model.molecularDiffusion && (ph == L_ix || ph == V_ix)
                     % Millington-Quirk tortuosity (same for all components in this phase)
                     phiS = phi .* s;
                     tau_MQ = (phiS).^(d.tortuosityExponent) .* (phi.^(-2));
@@ -215,12 +212,10 @@ classdef DispersiveDiffusivity < StateFunction
 
                     % Component loop for diffusion only
                     for c = 1:ncomp
-                        z = pick_mole_frac(ph, L_ix, V_ix, xc{c}, yc{c});
-
                         if ph == L_ix
                             % Liquid diffusion
                             D_i = Dliq_ref(c);
-                        else
+                        elseif ph == V_ix
                             % Gas diffusion (Wilke multi-component)
                             % D_i,mix = (1 - y_i) / sum(y_j/D_ij) for j!=i
                             yAll = model.getProp(state, 'y');
@@ -267,32 +262,6 @@ if iscell(field)
     val = field{ph};
 else
     val = field(:, ph);
-end
-end
-
-function z = pick_mole_frac(ph, L_ix, V_ix, x, y)
-% Pick mole fraction based on phase type.
-if ph == L_ix
-    z = x;
-elseif ph == V_ix
-    z = y;
-else
-    error('Phase mismatch');
-end
-end
-
-function [xc, yc] = localGetMoleFractions(model, state)
-% Get mole fractions as cell arrays.
-[x, y] = model.getProps(state, 'x', 'y');
-if ~iscell(x)
-    xc = mat2cell(x, size(x,1), ones(1, size(x,2)));
-else
-    xc = x;
-end
-if ~iscell(y)
-    yc = mat2cell(y, size(y,1), ones(1, size(y,2)));
-else
-    yc = y;
 end
 end
 

@@ -9,10 +9,14 @@ classdef ComponentPhaseDispFlux < StateFunction
     %   Computes the face-wise dispersive/diffusive flux for each component
     %   in each phase:
     %
-    %       J_{i,α} = -ρ_α^f · D_{eff,i,α}^f · ∇z_{i,α}
+    %       j*_{i,α} = -ρ_α^f · D_{eff,i,α}^f · ∇w_{i,α}
+    %       J_{i,α}  = j*_{i,α} - w_{i,α}^f Σ_j j*_{j,α}
     %
-    %   where D_{eff,i,α}^f is the face-averaged effective dispersive/diffusive
-    %   diffusivity (from DispersiveDiffusivity cell values).
+    %   where w is component mass fraction and D_{eff,i,α}^f is the
+    %   face-averaged effective dispersive/diffusive diffusivity (from
+    %   DispersiveDiffusivity cell values). The correction velocity in the
+    %   second expression ensures that diffusion does not create a net
+    %   phase mass flux.
     %
     %   D_{eff,i,α} = φ · S_α · (D_{disp,α} + D_{diff,i,α})
     %
@@ -45,7 +49,8 @@ classdef ComponentPhaseDispFlux < StateFunction
 
             % Dependencies
             df = df.dependsOn('DispersiveTransmissibility');
-            df = df.dependsOn({'x', 'y'}, 'state');
+            df = df.dependsOn('ComponentPhaseMassFractions', ...
+                'PVTPropertyFunctions');
             df = df.dependsOn('Density', 'PVTPropertyFunctions');
 
             df.label = 'J_{i,\\alpha}^{disp+diff}';
@@ -68,21 +73,13 @@ classdef ComponentPhaseDispFlux < StateFunction
             % Get number of components and phases
             ncomp = model.getNumberOfComponents();
             nph = model.getNumberOfPhases();
-            L_ix = model.getLiquidIndex();
-            V_ix = model.getVaporIndex();
-
             % Retrieve dispersive transmissibility (component-phase-face)
             % Expected: T_disp{i, ph} (nfac × 1)
             T_disp = df.getEvaluatedDependencies(state, 'DispersiveTransmissibility');
 
-            % Get mole fractions
-            [x, y] = model.getProps(state, 'x', 'y');
-            if ~iscell(x)
-                x = mat2cell(x, size(x,1), ones(1, size(x,2)));
-            end
-            if ~iscell(y)
-                y = mat2cell(y, size(y,1), ones(1, size(y,2)));
-            end
+            % ComponentPhaseFlux is a mass flux, so diffusion must use
+            % mass fractions rather than the EOS mole fractions.
+            massFraction = model.getProp(state, 'ComponentPhaseMassFractions');
 
             % Get density
             rho = model.getProp(state, 'Density');
@@ -97,20 +94,31 @@ classdef ComponentPhaseDispFlux < StateFunction
                 rho_ph = ifcell(rho, ph);
                 rho_f = op.faceAvg(rho_ph);
 
-                % Component loop
+                rawFlux = cell(ncomp, 1);
+                totalRawFlux = 0;
+
+                % Compute uncorrected mass-fraction Fickian fluxes.
                 for c = 1:ncomp
-
                     T_c_ph = T_disp{c, ph};
-                    % Get mole fraction for this component in this phase
-                    if ph == L_ix
-                        z = x{c};
-                    elseif ph == V_ix
-                        z = y{c};
+                    w = massFraction{c, ph};
+                    if isempty(w)
+                        rawFlux{c} = 0;
+                    else
+                        rawFlux{c} = -rho_f .* T_c_ph .* op.Grad(w);
                     end
+                    totalRawFlux = totalRawFlux + rawFlux{c};
+                end
 
-                    % Dispersive flux: J = - rho_f * T * Grad(z)
-                    % T_c_ph is (nfac × 1), rho_f is (nfac × 1), Grad(z) is (nfac × 1)
-                    J{c, ph} = - rho_f .* T_c_ph .* op.Grad(z);
+                % Diffusion is internal redistribution. Correct the
+                % component fluxes to ensure sum_c J_{c,ph} = 0.
+                for c = 1:ncomp
+                    w = massFraction{c, ph};
+                    if isempty(w)
+                        J{c, ph} = rawFlux{c};
+                    else
+                        J{c, ph} = rawFlux{c} - ...
+                            op.faceAvg(w).*totalRawFlux;
+                    end
                 end
             end
         end

@@ -94,12 +94,13 @@ classdef TracerDiffusivity < StateFunction
                 op = model.operators;
                 phase_flux = model.getProp(state, 'PhaseFlux');
                 u_face = ifcell(phase_flux, L_ix);
-                nfac = G.faces.num;
-                u_face_all = zeros(nfac, 1);
-                u_face_all(op.internalConn) = value(u_face);
+                internalFaces = find(op.internalConn);
+                internalFaceMap = sparse(internalFaces, ...
+                    1:numel(internalFaces), 1, G.faces.num, ...
+                    numel(internalFaces));
+                u_face_all = internalFaceMap*u_face;
 
-                v = faceFlux2cellVelocity(G, u_face_all);
-                v_mag = sqrt(sum(v.^2, 2));
+                v_mag = faceFlux2cellSpeed(G, u_face_all);
 
                 D_disp = ((d.alphaL_water + 2*d.alphaT_water)/3) .* v_mag;
                 D_disp = max(D_disp, 0);

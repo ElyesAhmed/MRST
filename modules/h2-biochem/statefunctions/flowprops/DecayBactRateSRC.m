@@ -57,7 +57,11 @@ classdef DecayBactRateSRC < StateFunction
             %   Psidecay - Decay rate coefficient (depends on current nbact) [1/s]
 
             % Get model parameters
-            rm = model.ReservoirModel;
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            else
+                rm = model;
+            end
             bcrm=rm.biochemFluid;
             nbioreact=bcrm.nbioreact;
 

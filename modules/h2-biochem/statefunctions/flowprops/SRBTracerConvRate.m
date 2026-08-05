@@ -13,8 +13,8 @@ classdef SRBTracerConvRate < StateFunction
     %   reaction rates [mol/s] from the same bacterial growth kinetics
     %   used for the EOS component sources in BactConvertionRate:
     %
-    %       SO4 sink:  q_SO4 = gamrsub/|gamrH2| * nbactMax * qbase
-    %       HS source: q_HS  = (1 - f_H2S) * gamp2/|gamrH2| * nbactMax * qbase
+    %       SO4 sink:  q_SO4 = gamrsub/|gamrH2| * nbactMax * qbase / rhoL
+    %       HS source: q_HS  = (1 - f_H2S) * gamp2/|gamrH2| * nbactMax * qbase / rhoL
     %
     %   where qbase = PsiGrowthRate .* BacterialMass ./ Y_H2, and f_H2S
     %   is the pH/salinity-dependent fraction of total sulfide produced
@@ -42,7 +42,15 @@ classdef SRBTracerConvRate < StateFunction
     methods
         function scr = SRBTracerConvRate(model, varargin)
             scr@StateFunction(model, varargin{:});
-            scr = scr.dependsOn('BacterialMass', 'PVTPropertyFunctions');
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            else
+                rm = model;
+            end
+            if isprop(rm, 'enableSulfateSource')
+                scr.enable_sulfate_source = rm.enableSulfateSource;
+            end
+            scr = scr.dependsOn({'BacterialMass', 'Density'}, 'PVTPropertyFunctions');
             scr = scr.dependsOn('PsiGrowthRate', 'state');
             scr = scr.dependsOn('so4', 'state');
             scr = scr.dependsOn('s', 'state');
@@ -50,7 +58,11 @@ classdef SRBTracerConvRate < StateFunction
         end
 
         function q = evaluateOnDomain(scr, model, state)
-            rm = model.ReservoirModel;
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            else
+                rm = model;
+            end
             q = {0, 0};
             if isempty(rm) || ~isprop(rm, 'sulfateReduction') || ~rm.sulfateReduction
                 return;
@@ -86,11 +98,24 @@ classdef SRBTracerConvRate < StateFunction
             qSO4_total = nbactMax .* gamrsub ./ abs(gamrH2) .* qbase;
             qS2_total  = nbactMax .* gamp2   ./ abs(gamrH2) .* qbase;
 
+            % BiochemistryModel inserts the EOS-component conversion
+            % source as BactConvRate/rhoL. Apply the same scaling to the
+            % biological aqueous-tracer sources so 4 mol H2 consumed
+            % corresponds to 1 mol SO4 consumed.
+            rho = rm.PVTPropertyFunctions.get(rm, state, 'Density');
+            L_ix = rm.getLiquidIndex();
+            if iscell(rho)
+                rhoL = rho{L_ix};
+            else
+                rhoL = rho(:, L_ix);
+            end
+            qSO4_bio = qSO4_total ./ rhoL;
+            qS2_bio  = qS2_total ./ rhoL;
+
             fH2S = rm.EOSModel.fractionH2SVolatile(state.T);
 
             % Add Sulfate source from Anhydrous dissolution
             if scr.enable_sulfate_source
-                L_ix = rm.getLiquidIndex();
                 s = rm.getProps(state, 's');
                 SO4_conc = rm.getProps(state, 'so4');
                             
@@ -115,12 +140,12 @@ classdef SRBTracerConvRate < StateFunction
                 r_dissolution = r_density .* V_cell;
 
                 % 6. Combine kinetic generation (+) with microbial consumption (-)
-                q{1} = qSO4_total + r_dissolution;
+                q{1} = qSO4_bio + r_dissolution;
             else
-                q{1} = qSO4_total;
+                q{1} = qSO4_bio;
             end
 
-            q{2} = (1 - fH2S) .* qS2_total;
+            q{2} = (1 - fH2S) .* qS2_bio;
         end
     end
 end

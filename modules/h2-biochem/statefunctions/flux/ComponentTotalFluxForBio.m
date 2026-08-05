@@ -31,11 +31,9 @@ classdef ComponentTotalFluxForBio < ComponentTotalFlux
 
             % Cache model flags for performance
             sf.hasDispersion_ = isprop(model, 'molecularDispersion') && ...
-                                islogical(model.molecularDispersion) && ...
                                 model.molecularDispersion;
 
             sf.hasDiffusion_ = isprop(model, 'molecularDiffusion') && ...
-                               islogical(model.molecularDiffusion) && ...
                                model.molecularDiffusion;
 
             % Add dependencies for the extra physics
@@ -45,9 +43,6 @@ classdef ComponentTotalFluxForBio < ComponentTotalFlux
 
             % Set the label for this flux (used in equation display)
             sf.label = 'V_i';
-            
-            % Validate flag combinations
-            sf.checkFlags(model);
         end
 
         function v = evaluateOnDomain(sf, model, state)
@@ -79,19 +74,6 @@ classdef ComponentTotalFluxForBio < ComponentTotalFlux
         end
     end
 
-    methods (Access = protected)
-        function checkFlags(sf, model)
-            % Validate that the model flags are properly set.
-            %
-            % PARAMETERS:
-            %   model - MRST model to validate
-
-            if sf.hasDispersion_ && ~sf.hasDiffusion_
-                warning(['ComponentTotalFluxForBio: Molecular diffusion ' ...
-                         'is not enabled.']);
-            end
-        end
-    end
 end
 
 %{

@@ -40,6 +40,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         gammak   = [];                    % Stoichiometric coefficients
         bacteriamodel = true;
         sulfateReduction = false;         % SO4/HS aqueous tracers active (set from biochemFluid)
+        enableSulfateSource = true;       % Optional anhydrite sulfate source for SRB tracers
         bact_capProp = 3.0e0;             % Min nbact in the model
         bact_maxProp = 120;               % Max nbact in the model
         molecularDiffusion = false;
@@ -55,6 +56,14 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             model = model@GenericOverallCompositionModel(G, rock, fluid, compFluid, ...
                 'water', includeWater, 'AutoDiffBackend', backend);
             model = merge_options(model, varargin{:});
+            model.molecularDiffusion = normalizeTransportFlag( ...
+                model.molecularDiffusion, 'molecularDiffusion');
+            model.molecularDispersion = normalizeTransportFlag( ...
+                model.molecularDispersion, 'molecularDispersion');
+            model.bactDiffusion = normalizeTransportFlag( ...
+                model.bactDiffusion, 'bactDiffusion');
+            model.chemotaxisEffect = normalizeTransportFlag( ...
+                model.chemotaxisEffect, 'chemotaxisEffect');
 
             % Set up operators
             model = model.setupOperators();
@@ -867,6 +876,12 @@ else
     if nargin > 4, v = min(v, maxvalue); end
 end
 state = model.setProp(state, name, v);
+end
+
+function flag = normalizeTransportFlag(flag, name)
+validateattributes(flag, {'logical', 'numeric'}, {'scalar', 'real', 'finite'}, ...
+    mfilename, name);
+flag = logical(flag);
 end
 
 %{

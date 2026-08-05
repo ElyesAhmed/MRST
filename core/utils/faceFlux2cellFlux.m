@@ -41,4 +41,3 @@ N = getNeighbourship(G, 'Topological', true);
 
 sgn      = 2*(N(cellFaces(:,1), 1) == cellNo) - 1;
 cellFlux = bsxfun(@times, sgn, faceFlux(cellFaces, :));
-

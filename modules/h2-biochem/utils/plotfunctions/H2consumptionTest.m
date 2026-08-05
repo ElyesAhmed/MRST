@@ -1,114 +1,112 @@
- aa =2;
- states = scenarios{aa}.states;
- ws = scenarios{aa}.ws;
- model = scenarios{aa}.model;
-% %schedule = scenarios{aa}.schedule;
-% --- Compute total H₂ injected (excluding discharge and shut periods) ---
-% Define the names of wells/periods to EXCLUDE
-exclude_names = {'discharge', 'shut'};  % adjust as needed
+for aa =1:10
+    states = scenarios{aa}.states;
+    ws = scenarios{aa}.ws;
+    model = scenarios{aa}.model;
+    % schedule = scenarios{aa}.schedule;
 
-% total_injected_H2 = 0;
-% for t = 1:length(schedule.step.val)
-%     % Get control index for this timestep
-%     % ctrl = schedule.step.control(t);
-%     % % Get all wells active in this control
-%     % wells = schedule.control(ctrl).W;
-%     % 
-%     % % --- Skip this timestep if any active well has an excluded name ---
-%     % skip = false;
-%     % for w = 1:numel(wells)
-%     %     if any(strcmp(wells(w).name, exclude_names))
-%     %         skip = true;
-%     %         break;
-%     %     end
-%     % end
-%     % if skip
-%     %     continue;
-%     % end
-%     % 
-%     % % --- Now we are in an injection period (no excluded wells) ---
-%     % % Find the well(s) that are actually injecting (sign=+1)
-%     % % inj_wells = wells([wells.sign] == 1);
-%     % % if isempty(inj_wells)
-%     % %     continue;  % no injecting well (should not happen)
-%     % % end
-%     % 
-%     % % Get the well solution for this timestep
-%     ws_t = ws{t};
-% 
-%     % For each injecting well, extract H₂ mass rate and accumulate
-%     % for iw = 1:numel(inj_wells)
-%     %     wname = inj_wells(iw).name;
-%     %     % Find this well in the well solution by name
-%     %     ws_idx = find(strcmp({ws_t.name}, wname), 1);
-%     %     if isempty(ws_idx)
-%     %         error('Well "%s" not found in well solution at timestep %d', wname, t);
-%     %     end
-%     H2_mass_rate = sum(ws_t.ComponentTotalFlux(:,idx_H2));
-%     dt = schedule.step.val(t);  % seconds
-%     total_injected_H2 = [total_injected_H2; (H2_mass_rate / mc_H2) * dt];
-%     %end
-% end
-% fprintf('Total H₂ injected (excluding discharge and shut periods): %.2f mol\n', total_injected_H2);
-eosNames = model.EOSModel.CompositionalMixture.names;
-idx_H2 = find(strcmp(eosNames, 'H2'));
-mc_H2 = model.EOSModel.CompositionalMixture.molarMass(idx_H2);
-% Option B: from well solutions (more accurate)
-% NOTE: ComponentTotalFlux is a MASS rate [kg/s] (EquationOfStateComponent
-% .getComponentDensity weights the mass phase density by mass fraction),
-% so it must be divided by the component molar mass to get mol/s.
-total_injected_H2 = 0;
-for t = 1:length(schedule.step.val)
-    ws_t = ws{t};
-    ic = schedule.step.control(t).W;
-    idx = strcmp({iW.name}, 'Discharge');
-    W_ic = schedule.control(idx).W;
-    if ~any(idx)
-        H2_mass_rate = ws_t(idx).ComponentTotalFlux(idx_H2);
-        dt = schedule.step.val(t);
-        total_injected_H2 = total_injected_H2 + (H2_mass_rate / mc_H2) * dt;
+    assert(numel(states) == numel(schedule.step.val), ...
+        'states and schedule must contain the same number of timesteps.');
+    assert(numel(ws) == numel(schedule.step.val), ...
+        'well solutions and schedule must contain the same number of timesteps.');
+
+    eosNames = model.EOSModel.CompositionalMixture.names;
+    idxH2 = find(strcmp(eosNames, 'H2'), 1);
+    assert(~isempty(idxH2), 'The compositional mixture does not contain H2.');
+    % The imposed rate and injector composition define the amount supplied
+    % to the model. ComponentTotalFlux is not suitable for this accounting:
+    % with molecular diffusion it includes the local diffusive contribution
+    % and can therefore report several times the prescribed H2 input.
+    gasIndex = model.getVaporIndex();
+    gasConstant = 8.314462618; % J/(mol K)
+    surfacePressure = model.FacilityModel.pressure;
+    surfaceTemperature = model.FacilityModel.T;
+    totalInjectedH2 = 0;
+
+    for t = 1:numel(schedule.step.val)
+        control = schedule.step.control(t);
+        wells = schedule.control(control).W;
+
+        for w = 1:numel(wells)
+            if wells(w).sign <= 0 || ...
+                    (~strcmpi(wells(w).type, 'bhp') && wells(w).val == 0) || ...
+                    (isfield(wells, 'status') && ~wells(w).status)
+                continue;
+            end
+
+            if ~isfield(wells, 'components') || numel(wells(w).components) < idxH2
+                error('Injection control at timestep %d has no H2 component composition.', t);
+            end
+            if strcmpi(wells(w).type, 'grat')
+                gasRate = wells(w).val;
+            elseif strcmpi(wells(w).type, 'rate')
+                gasRate = wells(w).val*wells(w).compi(gasIndex);
+            else
+                error(['Cannot compute prescribed H2 input for injection control type "%s" ' ...
+                    'at timestep %d.'], wells(w).type, t);
+            end
+
+            h2MolarRate = gasRate*surfacePressure/(gasConstant*surfaceTemperature) * ...
+                wells(w).components(idxH2);
+            totalInjectedH2 = totalInjectedH2 + h2MolarRate*schedule.step.val(t);
+        end
+    end
+    fprintf('Total injected H2: %.2f mol\n', totalInjectedH2);
+    totalInjectedH2_all(aa) = totalInjectedH2;
+
+    if model.bacteriamodel
+
+        nReactions = model.biochemFluid.nbioreact;
+        H2cum = cell(nReactions, 1);
+        totalCum = zeros(numel(states), nReactions);
+        finalCum = zeros(model.G.cells.num, nReactions);
+
+        for reaction = 1:nReactions
+            [~, H2cum{reaction}] = computeH2Consumption( ...
+                states, schedule, model, reaction);
+            totalCum(:, reaction) = sum(H2cum{reaction}, 1)';
+            finalCum(:, reaction) = H2cum{reaction}(:, end);
+        end
+
+        timeDays = cumsum(schedule.step.val)./day;
+        reactionNames = cellstr(model.biochemFluid.metabolicReaction);
+        reactionNames = reactionNames(:);
+
+        figure;
+        plot(timeDays, totalCum, 'LineWidth', 2);
+        hold on;
+        plot(timeDays, sum(totalCum, 2), 'k--', 'LineWidth', 2);
+        xlabel('Time (days)');
+        ylabel('Cumulative H2 consumed (mol)');
+        legend([reactionNames; {'Total'}], 'Location', 'best');
+        title('Total H2 Consumption over Time');
+        grid on;
+
+        xCoords = model.G.cells.centroids(:, 1);
+        xNorm = (xCoords - min(xCoords))./(max(xCoords) - min(xCoords));
+
+        figure;
+        plot(xNorm, finalCum, 'LineWidth', 2);
+        hold on;
+        plot(xNorm, sum(finalCum, 2), 'k--', 'LineWidth', 2);
+        xlabel('Dimensionless length (distance from injector)');
+        ylabel('Cumulative H2 consumed per cell (mol)');
+        legend([reactionNames; {'Total'}], 'Location', 'best');
+        title('Spatial Distribution of H2 Consumption');
+        grid on;
+
+        fprintf('Consumed injected H2: %.3f %%\n', ...
+            100*sum(finalCum, 'all')./totalInjectedH2);
+        % ---- Spatial distribution as stacked bar chart ----
+        xCoords = model.G.cells.centroids(:, 1);
+        xNorm = (xCoords - min(xCoords))./(max(xCoords) - min(xCoords));
+
+        figure;
+        % Stacked bars: each cell's total height = sum of all reactions
+        hb = bar(xNorm, finalCum, 'stacked');
+        xlabel('Dimensionless length (distance from injector)');
+        ylabel('Cumulative H₂ consumed per cell (mol)');
+        title('Spatial Distribution of H₂ Consumption');
+        legend(reactionNames, 'Location', 'best');
+        grid on;
     end
 end
-fprintf('Total injected H₂: %.2f mol\n', total_injected_H2);
-% Compute per-cell consumption for each reaction
-[H2_rate_meth, H2_cum_meth] = computeH2Consumption(states, schedule, model, 1);
-[H2_rate_aceto, H2_cum_aceto] = computeH2Consumption(states, schedule, model, 2);
-[H2_rate_srb, H2_cum_srb] = computeH2Consumption(states, schedule, model, 3);
-% Sum over all cells to get total cumulative at each timestep
-total_cum_meth = sum(H2_cum_meth, 1)';   % column vector
-total_cum_aceto = sum(H2_cum_aceto, 1)';
-total_cum_srb = sum(H2_cum_srb, 1)';
-total_cum_all = total_cum_meth + total_cum_aceto + total_cum_srb;
-% Time vector (days)
-time_days = cumsum(schedule.step.val) / (24 * 3600);
-% Plot
-figure;
-plot(time_days, total_cum_meth, 'b-', 'LineWidth', 2); hold on;
-plot(time_days, total_cum_aceto, 'r-', 'LineWidth', 2);
-plot(time_days, total_cum_srb, 'g-', 'LineWidth', 2);
-plot(time_days, total_cum_all, 'k--', 'LineWidth', 2);
-xlabel('Time (days)');
-ylabel('Cumulative H₂ consumed (mol)');
-legend('Methanogens', 'Acetogens', 'SRB', 'Total', 'Location', 'best');
-title('Total H₂ Consumption over Time');
-grid on;
-% Final cumulative consumption per cell for each reaction
-final_cum_meth = H2_cum_meth(:, end);
-final_cum_aceto = H2_cum_aceto(:, end);
-final_cum_srb = H2_cum_srb(:, end);
-final_cum_all = final_cum_meth + final_cum_aceto + final_cum_srb;
-% Dimensionless length (cell centers normalized)
-x_coords = model.G.cells.centroids(:, 1);
-x_norm = (x_coords - min(x_coords)) / (max(x_coords) - min(x_coords));
-% Plot each reaction separately
-figure;
-plot(x_norm, final_cum_meth, 'b-', 'LineWidth', 2); hold on;
-plot(x_norm, final_cum_aceto, 'r-', 'LineWidth', 2);
-plot(x_norm, final_cum_srb, 'g-', 'LineWidth', 2);
-plot(x_norm, final_cum_all, 'k--', 'LineWidth', 2);
-xlabel('Dimensionless length (distance from injector)');
-ylabel('Cumulative H₂ consumed per cell (mol)');
-legend('Methanogens', 'Acetogens', 'SRB', 'Total', 'Location', 'best');
-title('Spatial Distribution of H₂ Consumption');
-grid on;
-sum(final_cum_all)./total_injected_H2*100

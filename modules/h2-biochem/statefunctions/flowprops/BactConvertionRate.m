@@ -80,7 +80,11 @@ classdef BactConvertionRate < StateFunction
             %           for component c (ncells × 1), units [kg/s]
 
             % Get reservoir model and number of components
-            rm = model.ReservoirModel;
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            else
+                rm = model;
+            end
             ncomp = rm.EOSModel.getNumberOfComponents();
 
             % Initialize output with zeros
