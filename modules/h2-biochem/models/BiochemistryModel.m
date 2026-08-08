@@ -47,6 +47,27 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         molecularDispersion = false;
         bactDiffusion = false;            % Microbial diffusion
         chemotaxisEffect = false;         % chemotaxis 
+        carbonateBuffer = false;          % Fixed-pH HCO3-/CO2 buffer
+        carbonateBufferPH = 6.24;
+        carbonateBufferPka1 = 6.35;
+        phreeqcTimestepCoupling = false; % Post-timestep PHREEQC equilibration
+        phreeqcBackend = 'standard-pitzer'; % 'standard-pitzer', 'ugfact-com', or 'mrst-monod-com'
+        phreeqcConservativeCarbonTransfer = false; % Map PHREEQC mineral-carbon change to EOS CO2
+        phreeqcDatabaseFile = '';
+        phreeqcComProgId = 'IPhreeqcCOM.Object';
+        phreeqcCouplingOptions = struct();
+        % Set only by simulateH2StorageMrstMonodComPicard. Keeping the
+        % automatic post-step hook disabled prevents an accidental,
+        % lagged one-pass chemistry update for this backend.
+        phreeqcMrstMonodComPicardActive = false;
+        bacterialDecayOrder = 2;          % 2: legacy quadratic, 1: first-order
+    end
+
+    properties (SetAccess = private)
+        % Numerical PHREEQC snapshot used only by the mrst-monod-com
+        % outer Picard iteration. It is deliberately model metadata, not
+        % a state variable, so it has no accumulation or AD derivatives.
+        phreeqcMrstMonodComChemistryFeedback = [];
     end
 
     methods
@@ -64,6 +85,45 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 model.bactDiffusion, 'bactDiffusion');
             model.chemotaxisEffect = normalizeTransportFlag( ...
                 model.chemotaxisEffect, 'chemotaxisEffect');
+            model.carbonateBuffer = normalizeTransportFlag( ...
+                model.carbonateBuffer, 'carbonateBuffer');
+            model.phreeqcTimestepCoupling = normalizeTransportFlag( ...
+                model.phreeqcTimestepCoupling, 'phreeqcTimestepCoupling');
+            model.phreeqcBackend = normalizePhreeqcBackend(model.phreeqcBackend);
+            model.phreeqcConservativeCarbonTransfer = normalizeTransportFlag( ...
+                model.phreeqcConservativeCarbonTransfer, ...
+                'phreeqcConservativeCarbonTransfer');
+            model.phreeqcMrstMonodComPicardActive = normalizeTransportFlag( ...
+                model.phreeqcMrstMonodComPicardActive, ...
+                'phreeqcMrstMonodComPicardActive');
+            assert(~model.phreeqcMrstMonodComPicardActive, ...
+                ['phreeqcMrstMonodComPicardActive is reserved for ', ...
+                 'simulateH2StorageMrstMonodComPicard and cannot be ', ...
+                 'configured on construction.']);
+            assert(ischar(model.phreeqcComProgId) || ...
+                (isstring(model.phreeqcComProgId) && isscalar(model.phreeqcComProgId)), ...
+                'phreeqcComProgId must be a character vector or scalar string.');
+            model.phreeqcComProgId = char(model.phreeqcComProgId);
+            assert(~isempty(strtrim(model.phreeqcComProgId)), ...
+                'phreeqcComProgId must identify a registered IPhreeqcCOM server.');
+            validateattributes(model.bacterialDecayOrder, {'numeric'}, ...
+                {'scalar', 'integer', '>=', 1, '<=', 2}, ...
+                mfilename, 'bacterialDecayOrder');
+            assert(~model.phreeqcConservativeCarbonTransfer || model.phreeqcTimestepCoupling, ...
+                ['phreeqcConservativeCarbonTransfer requires ', ...
+                 'phreeqcTimestepCoupling=true.']);
+            assert(~model.phreeqcConservativeCarbonTransfer || ...
+                strcmp(model.phreeqcBackend, 'standard-pitzer'), ...
+                ['phreeqcConservativeCarbonTransfer is only defined for the ', ...
+                 'standard-pitzer backend. COM backends transfer all ', ...
+                 'reactive EOS component inventories directly.']);
+            if model.phreeqcTimestepCoupling && ...
+                    any(strcmp(model.phreeqcBackend, {'ugfact-com', 'mrst-monod-com'}))
+                assert(ispc, ['COM PHREEQC backends require Windows and ', ...
+                    'a registered IPhreeqcCOM server. Use ''standard-pitzer'' ', ...
+                    'for the cross-platform PhreeqcMatlab backend.']);
+                validateModifiedComConfiguration(model);
+            end
 
             % Set up operators
             model = model.setupOperators();
@@ -84,6 +144,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             % the liquid phase, reacted via SRBTracerConvRate), never as
             % EOS/CompositionalMixture components.
             model.sulfateReduction = any(strcmp(model.biochemFluid.metabolicReaction, 'SulfateReducingBacteria'));
+            if model.phreeqcTimestepCoupling
+                assert(model.bacteriamodel && model.carbonateBuffer && model.sulfateReduction, ...
+                    ['phreeqcTimestepCoupling requires bacterial HCO3 and ', ...
+                     'SO4/HS tracer transport.']);
+            end
 
             %% Set compositional fluid and EOS
             if isempty(compFluid)
@@ -166,6 +231,22 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     model.FacilityModel = GenericFacilityModel(model);
                 end
             end
+            if model.bacteriamodel && model.isUgfactComPhreeqcBackend()
+                assert(~model.bactDiffusion && ~model.chemotaxisEffect, ...
+                    ['phreeqcBackend=''ugfact-com'' cannot be combined with ', ...
+                     'bactDiffusion or chemotaxisEffect: PHREEQC integrates only ', ...
+                     'local per-cell kinetics and has no notion of spatial ', ...
+                     'bacterial transport. Diffusing/chemotaxis-moving nbact would ', ...
+                     'move a quantity that is disconnected from the biomass PHREEQC ', ...
+                     'is actually growing in phreeqcUgfactBiomassMET/ACE/SRB.']);
+                fprintf(['BiochemistryModel: phreeqcBackend=''ugfact-com'' is active -- ', ...
+                    'MET/ACE/SRB kinetics (growth/decay and component sources) are ', ...
+                    'carried out by PHREEQC. MRST''s bacterial mass-balance equation ', ...
+                    '(nbact) is not assembled: with zero MRST reaction source and no ', ...
+                    'diffusion/chemotaxis transport it would be a no-op every step. ', ...
+                    'PsiGrowthRate/CarbonLimitedGrowthRate/BacterialMass remain ', ...
+                    'available as diagnostic outputs only.\n']);
+            end
             model = validateModel@GenericOverallCompositionModel(model, varargin{:});
         end
 
@@ -178,17 +259,18 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
             if model.bacteriamodel
                 flowprops = flowprops.setStateFunction('PsiGrowthRate', GrowthBactRateSRC(model));
+                flowprops = flowprops.setStateFunction('CarbonLimitedGrowthRate', ...
+                    CarbonLimitedGrowthRate(model));
                 flowprops = flowprops.setStateFunction('PsiDecayRate',  DecayBactRateSRC(model));
                 flowprops = flowprops.setStateFunction('BactConvRate',  BactConvertionRate(model));
 
                 % Register bacterial mass as cell property (not a source term)
                 pvtprops = pvtprops.setStateFunction('BacterialMass', BacterialMass(model));
 
-                if model.sulfateReduction
+                if model.hasMobileAqueousTracers()
                     pvtprops = pvtprops.setStateFunction('AqueousTracerMass', AqueousTracerMass(model));
                 end
             end
-
             pvt = pvtprops.getRegionPVT(model);
             if isfield(model.fluid, 'pvMultR')
                 pv = DynamicFlowPoreVolume(model, pvt);
@@ -208,6 +290,9 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 nbact0 = 1e6;
                 state.nbact = repmat(nbact0, model.G.cells.num, 1);
             end
+            if model.carbonateBuffer && ~isfield(state, 'tracerHCO3')
+                state.tracerHCO3 = zeros(model.G.cells.num, 1);
+            end
             if model.sulfateReduction
                 if ~isfield(state, 'tracerSO4')
                     state.tracerSO4 = zeros(model.G.cells.num, 1);
@@ -223,6 +308,24 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     % feeding total sulfide to the EOS -- see
                     % initStateAD/updateAfterConvergence.
                     state.h2sDissolvedLag = zeros(model.G.cells.num, 1);
+                end
+            end
+            if model.phreeqcTimestepCoupling
+                % These are state quantities, rather than mutable model
+                % properties, because updateAfterConvergence returns only
+                % state. They are used by the next timestep's kinetics.
+                if ~isfield(state, 'phreeqcPH')
+                    state.phreeqcPH = repmat(model.carbonateBufferPH, model.G.cells.num, 1);
+                end
+                if ~isfield(state, 'phreeqcCarbonatePka1')
+                    state.phreeqcCarbonatePka1 = repmat( ...
+                        model.carbonateBufferPka1, model.G.cells.num, 1);
+                end
+                if ~isfield(state, 'tracerCa')
+                    state.tracerCa = zeros(model.G.cells.num, 1);
+                end
+                if ~isfield(state, 'tracerMg')
+                    state.tracerMg = zeros(model.G.cells.num, 1);
                 end
             end
         end
@@ -242,16 +345,23 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             end
 
             if model.bacteriamodel
-                nbact = model.getProp(state, 'nbact');
-                nbact = expandMatrixToCell(nbact);
-                bactnames = model.biochemFluid.bactnames;
-                names = [{'pressure'}, cnames(2:end), bactnames, enames];
-                vars  = [p, z(2:end), nbact, evars];
-                if model.sulfateReduction
-                    so4 = model.getProp(state, 'so4');
-                    hs  = model.getProp(state, 'hs');
-                    names = [names, {'SO4', 'HS'}];
-                    vars  = [vars, {so4, hs}];
+                if model.isUgfactComPhreeqcBackend()
+                    % nbact has no equation to solve for this backend (see
+                    % validateModel/isUgfactComPhreeqcBackend): it stays a
+                    % plain state field, not a Newton primary variable.
+                    names = [{'pressure'}, cnames(2:end), enames];
+                    vars  = [p, z(2:end), evars];
+                else
+                    nbact = model.getProp(state, 'nbact');
+                    nbact = expandMatrixToCell(nbact);
+                    bactnames = model.biochemFluid.bactnames;
+                    names = [{'pressure'}, cnames(2:end), bactnames, enames];
+                    vars  = [p, z(2:end), nbact, evars];
+                end
+                aqueousNames = model.getAqueousTracerNames();
+                for i = 1:numel(aqueousNames)
+                    names = [names, aqueousNames(i)]; %#ok<AGROW>
+                    vars  = [vars, {model.getProp(state, lower(aqueousNames{i}))}]; %#ok<AGROW>
                 end
             else
                 names = [{'pressure'}, cnames(2:end), enames];
@@ -269,6 +379,13 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         function [eqs, names, types, state] = getModelEquations(model, state0, state, dt, drivingForces, varargin)
             % Discretize
             [eqs, flux, names, types] = model.FlowDiscretization.componentConservationEquations(model, state, state0, dt);
+            if model.bacteriamodel && model.carbonateBuffer
+                % Use the pre-step aqueous inventory to bound this step's
+                % growth. Using the evolving Newton state here would make
+                % the rate cap consume its own final-state availability.
+                state.carbonSubstrateDt = dt;
+                state.carbonSubstrateMoles = getAqueousCarbonMoles(model, state0);
+            end
             src = model.FacilityModel.getComponentSources(state);
             % Assemble equations and add in sources
             [pressures, sat, mob, rho, X] = model.getProps(state, 'PhasePressures', 's', 'Mobility', 'Density', 'ComponentPhaseMassFractions');
@@ -296,6 +413,33 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     rhoL = rho(:, L_ix);
                 end
 
+                hco3Sink = 0;
+                if model.carbonateBuffer
+                    idxCO2 = find(strcmpi(cnames, 'CO2'), 1);
+                    assert(~isempty(idxCO2), ...
+                        'carbonateBuffer requires an EOS CO2 component.');
+
+                    hco3 = model.getProp(state, 'hco3');
+                    pv = model.PVTPropertyFunctions.get(model, state, 'PoreVolume');
+                    s = model.getProp(state, 's');
+                    if iscell(s)
+                        sL = max(s{L_ix}, 0);
+                    else
+                        sL = max(s(:, L_ix), 0);
+                    end
+
+                    molarMassCO2 = model.EOSModel.CompositionalMixture.molarMass(idxCO2);
+                    co2Demand = max(-src_rate{idxCO2}./rhoL./molarMassCO2, 0);
+                    hco3Available = pv.*sL.*hco3./dt;
+                    hco3Sink = min(co2Demand, hco3Available);
+
+                    % Bicarbonate supplies the CO2 consumed by MET/ACE.
+                    % src_rate is later divided by rhoL in the component
+                    % equation, so apply the inverse scaling here.
+                    src_rate{idxCO2} = src_rate{idxCO2} + ...
+                        hco3Sink.*molarMassCO2.*rhoL;
+                end
+
                 for i = 1:ncomp
                     if ~isempty(src_rate{i})
                         eqs{i} = eqs{i} -src_rate{i}./rhoL;
@@ -307,41 +451,58 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 eqs{i} = model.operators.AccDiv(eqs{i}, flux{i});
             end
             if model.bacteriamodel
-                % Bacterial mass balance: d(M)/dt + div(flux) = source
-                % where M = pv * S_l * nbact [kg]
-                [beqs, bflux, bnames, btypes] = model.FlowDiscretization.bacteriaConservationEquation(model, state, state0, dt);
                 fd = model.FlowDiscretization;
-                src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
+                if model.isUgfactComPhreeqcBackend()
+                    % nbact's mass-balance equation is a provable no-op
+                    % under this backend: MET/ACE/SRB kinetics (the
+                    % reaction source) are carried out entirely by
+                    % PHREEQC, and validateModel forbids combining this
+                    % backend with bactDiffusion/chemotaxisEffect (the
+                    % only transport terms nbact has). With zero source
+                    % and zero flux the equation only re-derives
+                    % nbact == nbact0 every step, so skip assembling it
+                    % rather than spending a Newton unknown on it.
+                    beqs = {}; bnames = {}; btypes = {};
+                else
+                    % Bacterial mass balance: d(M)/dt + div(flux) = source
+                    % where M = pv * S_l * nbact [kg]
+                    [beqs, bflux, bnames, btypes] = model.FlowDiscretization.bacteriaConservationEquation(model, state, state0, dt);
+                    src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
 
-                % Assemble accumulation and flux divergence
-                nbioreact=model.biochemFluid.nbioreact;
-                for i=1:nbioreact
-                    if model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
-                        beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
-                        % Dirichlet boundary conditions for bacterial diffusion
-                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
-                    elseif model.chemotaxisEffect && ~model.bactDiffusion && ~isempty(bflux{i})
-                        beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
-                    elseif model.bactDiffusion && model.chemotaxisEffect && ~isempty(bflux{i})
-                        beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
-                        % Dirichlet boundary conditions for bacterial diffusion
-                        beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
-                    else
-                        % No diffusion: just accumulation term (pore-scale diffusion only)
-                         %beqs{1} = model.operators.AccDiv(beqs{1},0);
+                    % Assemble accumulation and flux divergence
+                    nbioreact=model.biochemFluid.nbioreact;
+                    for i=1:nbioreact
+                        if model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
+                            beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
+                            % Dirichlet boundary conditions for bacterial diffusion
+                            beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
+                        elseif model.chemotaxisEffect && ~model.bactDiffusion && ~isempty(bflux{i})
+                            beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
+                        elseif model.bactDiffusion && model.chemotaxisEffect && ~isempty(bflux{i})
+                            beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
+                            % Dirichlet boundary conditions for bacterial diffusion
+                            beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
+                        else
+                            % No diffusion: just accumulation term (pore-scale diffusion only)
+                             %beqs{1} = model.operators.AccDiv(beqs{1},0);
+                        end
+
+                        beqs{i} = beqs{i} - src_growthdecay{i};
                     end
-
-                    beqs{i} = beqs{i} - src_growthdecay{i};
                 end
 
-                if model.sulfateReduction
-                    % SO4/HS aqueous tracer mass balance: pure advection
-                    % with the liquid phase plus SRB reaction source, no
-                    % EOS/flash coupling (see SoreideWhitsonEos and
-                    % SRBTracerConvRate).
+                if model.hasMobileAqueousTracers()
+                    % Aqueous tracers are advected with the liquid phase.
+                    % SO4/HS retain their SRB sources; HCO3 carries the
+                    % existing biological carbon sink, while Ca/Mg have no
+                    % MRST reaction source and are updated by PHREEQC.
                     [tacc, tflux, tnames, ttypes] = model.FlowDiscretization.tracerConservationEquation(model, state, state0, dt);
-                    src_tracer = model.FacilityModel.getSRBTracerSources(fd, state, state0, dt);
-                    for i = 1:2
+                    src_tracer = model.FacilityModel.getAqueousTracerSources(fd, state, state0, dt);
+                    hco3Index = find(strcmp(tnames, 'HCO3'), 1);
+                    if ~isempty(hco3Index)
+                        src_tracer{hco3Index} = src_tracer{hco3Index} - hco3Sink;
+                    end
+                    for i = 1:numel(tacc)
                         tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
                         tacc{i} = tacc{i} - src_tracer{i};
                     end
@@ -484,26 +645,31 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
                 removed = isP;
 
-                bactnames=model.biochemFluid.bactnames;
-                nbioreact=model.biochemFluid.nbioreact;
-                nbact=cell(1, nbioreact);
-                 for i = 1:nbioreact
-                    name = bactnames{i};
-                    sub = strcmp(names, name);
-                    nbact{i} = vars{sub};
-                    removed(sub) = true;
+                if model.isUgfactComPhreeqcBackend()
+                    % nbact is not a primary variable for this backend
+                    % (see getPrimaryVariables); carry its existing value
+                    % through unchanged.
+                    nbact = expandMatrixToCell(model.getProp(state, 'nbact'));
+                else
+                    bactnames=model.biochemFluid.bactnames;
+                    nbioreact=model.biochemFluid.nbioreact;
+                    nbact=cell(1, nbioreact);
+                    for i = 1:nbioreact
+                        name = bactnames{i};
+                        sub = strcmp(names, name);
+                        nbact{i} = vars{sub};
+                        removed(sub) = true;
+                    end
                 end
                 state = model.setProp(state, 'nbact', nbact);
 
-                if model.sulfateReduction
-                    isSO4 = strcmp(names, 'SO4');
-                    isHS  = strcmp(names, 'HS');
-                    so4 = vars{isSO4};
-                    hs  = vars{isHS};
-                    removed(isSO4) = true;
-                    removed(isHS)  = true;
-                    state = model.setProp(state, 'so4', so4);
-                    state = model.setProp(state, 'hs', hs);
+                aqueousNames = model.getAqueousTracerNames();
+                for i = 1:numel(aqueousNames)
+                    isTracer = strcmp(names, aqueousNames{i});
+                    if any(isTracer)
+                        state = model.setProp(state, lower(aqueousNames{i}), vars{isTracer});
+                        removed(isTracer) = true;
+                    end
                 end
 
                 cnames = model.EOSModel.getComponentNames();
@@ -526,6 +692,8 @@ classdef BiochemistryModel < GenericOverallCompositionModel
 
                 if isAD
                     if model.sulfateReduction
+                        so4 = model.getProp(state, 'so4');
+                        hs = model.getProp(state, 'hs');
                         % Refresh the EOS's salinity/H2S-speciation
                         % coupling from the CURRENT iterate's SO4/HS
                         % tracers before flashing (model is a value
@@ -612,7 +780,10 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             % Get values for convergence check with CNV-style scaling
             [v_eqs, tolerances, names] = getConvergenceValues@ReservoirModel(model, problem, varargin{:});
 
-            if model.bacteriamodel
+            if model.bacteriamodel && ~model.isUgfactComPhreeqcBackend()
+                % No nbact equation is assembled for this backend (see
+                % getModelEquations/getPrimaryVariables), so there is no
+                % '<name> (cell)' residual to look up here.
                 nbioreact=model.biochemFluid.nbioreact;
                 bacteriaIndex=zeros(nbioreact,1);
                 for i=1:nbioreact
@@ -697,12 +868,21 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 case {'nbact', 'bacteriamodel'} %Bacteria model
                     index = ':';
                     fn = 'nbact';
-                case  {'so4', 'tracerSO4'} % SO4 aqueous tracer (non-volatile, outside the EOS)
+                case  {'so4', 'tracerso4'} % SO4 aqueous tracer (non-volatile, outside the EOS)
                     index = ':';
                     fn = 'tracerSO4';
-                case {'hs', 'tracerHS'} % HS aqueous tracer (non-volatile, outside the EOS)
+                case {'hs', 'tracerhs'} % HS aqueous tracer (non-volatile, outside the EOS)
                     index = ':';
                     fn = 'tracerHS';
+                case {'hco3', 'tracerhco3'}
+                    index = ':';
+                    fn = 'tracerHCO3';
+                case {'ca', 'tracerca'}
+                    index = ':';
+                    fn = 'tracerCa';
+                case {'mg', 'tracermg'}
+                    index = ':';
+                    fn = 'tracerMg';
                 otherwise
                     bactnames = model.biochemFluid.bactnames;
                     sub = strcmpi(bactnames, name);
@@ -724,6 +904,40 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
+            if model.bacteriamodel && ~model.isUgfactComPhreeqcBackend()
+                % Preserve the converged reaction source before an optional
+                % PHREEQC split step changes the chemical state.
+                state = storeH2ConsumptionRate(model, state);
+                if model.isMrstMonodComPhreeqcBackend()
+                    state = accumulateMrstMonodComH2Consumption( ...
+                        state0, state, dt, model.G.cells.num, ...
+                        model.biochemFluid.nbioreact);
+                end
+            end
+            if model.phreeqcTimestepCoupling
+                % This deliberately runs only after the nonlinear timestep
+                % has converged. The helper updates aqueous tracer and
+                % mineral state for the following timestep; it never enters
+                % a Newton iteration.
+                switch model.phreeqcBackend
+                    case 'standard-pitzer'
+                        state = runH2StoragePhreeqcTimestepCoupling(model, state, dt);
+                    case 'ugfact-com'
+                        state = runH2StorageUgfactIPhreeqcCOMTimestepCoupling( ...
+                            model, state, dt);
+                    case 'mrst-monod-com'
+                        if ~model.phreeqcMrstMonodComPicardActive
+                            error('BiochemistryModel:MrstMonodComRequiresPicardDriver', ...
+                                ['phreeqcBackend=''mrst-monod-com'' must be run with ', ...
+                                 'simulateH2StorageMrstMonodComPicard. Direct ', ...
+                                 'simulateScheduleAD would apply a lagged chemistry ', ...
+                                 'split and is intentionally rejected.']);
+                        end
+                    otherwise
+                        error('BiochemistryModel:InvalidPhreeqcBackend', ...
+                            'Unsupported PHREEQC backend: %s.', model.phreeqcBackend);
+                end
+            end
             if model.sulfateReduction
                 % Cache the converged dissolved-H2S concentration
                 % [mol/m3 liquid] for use as the (lagged) total-sulfide
@@ -731,6 +945,8 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 % initStateAD. This avoids a circular dependency between
                 % the flash (needs total sulfide -> msalt) and its own
                 % output (dissolved H2S).
+                % It deliberately follows PHREEQC, whose optional carbon
+                % transfer reflashes the EOS composition.
                 names = model.EOSModel.CompositionalMixture.names;
                 indH2S = find(strcmp(names, 'H2S'), 1);
                 if ~isempty(indH2S)
@@ -764,42 +980,56 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                 % Get updated bacteria state (after parent capping/processing)
                 nbact_new = value(model.getProp(state, 'nbact'));
 
-                % Limit fractional change per iteration to stabilize stiff kinetics.
-                % Aggressive damping for highly stiff growth/decay kinetics (linear growth + nbact^2 decay).
-                % 5% change per iteration is conservative but necessary for quadratic decay singularities.
-                 nbioreact=model.biochemFluid.nbioreact;
+                % Backtrack only updates that would cross the artificial
+                % lower bound. A generic fractional cap would make the
+                % converged biomass depend on the Newton iteration count.
+                nbioreact = model.biochemFluid.nbioreact;
+                nbact_safe = nbact_new;
+                didBacktrack = false;
+                lower = model.bact_capProp;
                 for i = 1:nbioreact
                     if iscell(nbact_old)
-                        nbacti_old=nbact_old{i};
-                        nbacti_new=nbact_new{i};
+                        nbacti_old = nbact_old{i};
+                        nbacti_new = nbact_new{i};
                     else
-                        nbacti_old=nbact_old(:,i);
-                        nbacti_new=nbact_new(:,i);
+                        nbacti_old = nbact_old(:, i);
+                        nbacti_new = nbact_new(:, i);
                     end
-                    max_frac_change = 0.05;
-                    frac_change = (nbacti_new - nbacti_old) ./ max(abs(nbacti_old), 1e-12);
 
-                    % Apply adaptive damping where fractional change is excessive
-                    excessive = abs(frac_change) > max_frac_change;
-                    if any(excessive)&&false
-                        % Apply exponential damping: new = old + max_frac_change * sign(change) * old_mag
-                        sign_inc = sign(nbacti_new(excessive) - nbacti_old(excessive));
-                        nbacti_damped = nbacti_old(excessive) + ...
-                            max_frac_change * sign_inc .* max(abs(nbacti_old(excessive)), 1e-12);
-                        nbacti_new(excessive) = nbacti_damped;
-                        state = model.setProp(state, 'nbact', nbacti_new);
+                    crossesLower = nbacti_old > lower & nbacti_new <= lower;
+                    if any(crossesLower)
+                        alpha = 0.5*(nbacti_old(crossesLower) - lower)./ ...
+                            (nbacti_old(crossesLower) - nbacti_new(crossesLower));
+                        nbacti_safe_values = nbacti_old(crossesLower) + alpha.* ...
+                            (nbacti_new(crossesLower) - nbacti_old(crossesLower));
+                        if iscell(nbact_safe)
+                            nbact_safe{i}(crossesLower) = nbacti_safe_values;
+                        else
+                            nbact_safe(crossesLower, i) = nbacti_safe_values;
+                        end
+                        didBacktrack = true;
                     end
+                end
+                if didBacktrack
+                    state = model.setProp(state, 'nbact', nbact_safe);
                 end
 
 
                 % Final capping to physical bounds
                 state = model.capProperty(state, 'nbact', model.bact_capProp, model.bact_maxProp);
+                if model.carbonateBuffer
+                    state = model.capProperty(state, 'hco3', 0, inf);
+                end
                 state = model.capProperty(state, 's', 1.0e-8, 1);
                 state.components = ensureMinimumFraction(state.components, model.EOSModel.minimumComposition);
 
                 if model.sulfateReduction
                     state = model.capProperty(state, 'so4', 0);
                     state = model.capProperty(state, 'hs', 0);
+                end
+                if model.phreeqcTimestepCoupling
+                    state = model.capProperty(state, 'ca', 0);
+                    state = model.capProperty(state, 'mg', 0);
                 end
             else
                 [state, report] = updateState@GenericOverallCompositionModel(model, state, problem, dz, drivingForces);
@@ -820,6 +1050,72 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
             isDynamic = isa(model.rock.poro, 'function_handle');
 
+        end
+
+        function names = getAqueousTracerNames(model)
+            % Mobile non-EOS tracers, all stored as mol/m^3 liquid.
+            names = {};
+            if model.sulfateReduction
+                names = {'SO4', 'HS'};
+            end
+            if model.carbonateBuffer
+                names = [names, {'HCO3'}];
+            end
+            if model.phreeqcTimestepCoupling
+                names = [names, {'Ca', 'Mg'}];
+            end
+        end
+
+        function active = hasMobileAqueousTracers(model)
+            active = model.bacteriamodel && ~isempty(model.getAqueousTracerNames());
+        end
+
+        function active = isUgfactComPhreeqcBackend(model)
+            % True only while the optional split COM kinetics is active.
+            %
+            % The implicit h2-biochem reaction sources are disabled in
+            % this mode. The nbact mass-balance equation is not assembled
+            % either (validateModel forbids bactDiffusion/chemotaxisEffect
+            % here, so it would otherwise be solved as a pure no-op every
+            % step); aqueous tracer transport equations remain active.
+            % PHREEQC owns separate biomass state in the post-convergence
+            % split.
+            active = model.phreeqcTimestepCoupling && ...
+                strcmp(model.phreeqcBackend, 'ugfact-com');
+        end
+
+        function active = isMrstMonodComPhreeqcBackend(model)
+            % True when equilibrium COM chemistry is coupled to MRST's
+            % existing Monod reaction model through the Picard driver.
+            active = model.phreeqcTimestepCoupling && ...
+                strcmp(model.phreeqcBackend, 'mrst-monod-com');
+        end
+
+        function model = setMrstMonodComChemistryFeedback(model, feedback)
+            % Store one immutable, numerical chemistry snapshot for the
+            % next MRST candidate solve in the outer Picard iteration.
+            assert(model.isMrstMonodComPhreeqcBackend() && ...
+                model.phreeqcMrstMonodComPicardActive, ...
+                ['MRST Monod chemistry feedback is reserved for the active ', ...
+                 'mrst-monod-com Picard driver.']);
+            model.phreeqcMrstMonodComChemistryFeedback = ...
+                normalizeMrstMonodComChemistryFeedback(feedback, model.G.cells.num);
+        end
+
+        function model = clearMrstMonodComChemistryFeedback(model)
+            model.phreeqcMrstMonodComChemistryFeedback = [];
+        end
+
+        function feedback = getMrstMonodComChemistryFeedback(model)
+            % Return the outer iterate's fixed numerical chemistry only.
+            feedback = [];
+            if model.isMrstMonodComPhreeqcBackend() && ...
+                    model.phreeqcMrstMonodComPicardActive
+                feedback = model.phreeqcMrstMonodComChemistryFeedback;
+                assert(~isempty(feedback), ...
+                    ['The active mrst-monod-com Picard solve is missing its ', ...
+                     'immutable PHREEQC chemistry feedback snapshot.']);
+            end
         end
 
         function nbactArray = extractBactValues(model, nbact)
@@ -882,6 +1178,151 @@ function flag = normalizeTransportFlag(flag, name)
 validateattributes(flag, {'logical', 'numeric'}, {'scalar', 'real', 'finite'}, ...
     mfilename, name);
 flag = logical(flag);
+end
+
+function backend = normalizePhreeqcBackend(backend)
+assert(ischar(backend) || (isstring(backend) && isscalar(backend)), ...
+    'phreeqcBackend must be a character vector or scalar string.');
+backend = lower(strtrim(char(backend)));
+assert(ismember(backend, {'standard-pitzer', 'ugfact-com', 'mrst-monod-com'}), ...
+    ['phreeqcBackend must be ''standard-pitzer'', ''ugfact-com'', or ', ...
+     '''mrst-monod-com''; ', ...
+     'got ''%s''.'], backend);
+end
+
+function feedback = normalizeMrstMonodComChemistryFeedback(feedback, nc)
+required = {'pH', 'carbonatePka1', 'hco3Molality', 'co2Molality', ...
+    'sulfateMolality'};
+assert(isstruct(feedback) && isscalar(feedback) && ...
+    all(isfield(feedback, required)), ...
+    ['mrst-monod-com chemistry feedback must be a scalar struct with ', ...
+     'pH, carbonatePka1, hco3Molality, co2Molality, and sulfateMolality.']);
+for i = 1:numel(required)
+    name = required{i};
+    values = feedback.(name);
+    assert(isnumeric(values) && isreal(values) && ~isa(values, 'ADI'), ...
+        'mrst-monod-com feedback %s must be a real numeric (non-AD) vector.', name);
+    values = values(:);
+    assert(numel(values) == nc && all(isfinite(values)), ...
+        'mrst-monod-com feedback %s must contain one finite value per cell.', name);
+    if ~ismember(name, {'pH', 'carbonatePka1'})
+        assert(all(values >= 0), ...
+            'mrst-monod-com feedback %s must be non-negative.', name);
+    end
+    feedback.(name) = double(values);
+end
+end
+
+function validateModifiedComConfiguration(model)
+databaseFile = model.phreeqcDatabaseFile;
+if isempty(databaseFile) && isfield(model.phreeqcCouplingOptions, 'databaseFile')
+    databaseFile = model.phreeqcCouplingOptions.databaseFile;
+end
+assert(ischar(databaseFile) || (isstring(databaseFile) && isscalar(databaseFile)), ...
+    'COM PHREEQC backends require an explicitly configured PHREEQC_Modified.DAT path.');
+databaseFile = char(databaseFile);
+assert(~isempty(strtrim(databaseFile)) && isAbsolutePhreeqcPath(databaseFile), ...
+    ['COM PHREEQC backends require an explicit absolute databaseFile path to ', ...
+     'PHREEQC_Modified.DAT.']);
+assert(isfile(databaseFile), ...
+    'COM PHREEQC database not found: %s', databaseFile);
+assert(contains(lower(databaseFile), 'phreeqc_modified.dat'), ...
+    ['COM PHREEQC backends require PHREEQC_Modified.DAT, not a standard ', ...
+     'PHREEQC database: %s'], databaseFile);
+
+comProgId = model.phreeqcComProgId;
+if isfield(model.phreeqcCouplingOptions, 'comProgId')
+    comProgId = model.phreeqcCouplingOptions.comProgId;
+end
+assert(ischar(comProgId) || (isstring(comProgId) && isscalar(comProgId)), ...
+    'COM PHREEQC backends require an explicitly configured IPhreeqcCOM ProgID.');
+assert(~isempty(strtrim(char(comProgId))), ...
+    'COM PHREEQC backends require an explicitly configured IPhreeqcCOM ProgID.');
+end
+
+function isAbsolute = isAbsolutePhreeqcPath(path)
+path = char(path);
+isAbsolute = ~isempty(regexp(path, '^[A-Za-z]:[\\/]|^\\\\', 'once')) || ...
+    startsWith(path, filesep);
+end
+
+function carbonMoles = getAqueousCarbonMoles(model, state)
+% Return the finite aqueous CO2 plus HCO3 inventory in each cell.
+cnames = model.EOSModel.getComponentNames();
+idxCO2 = find(strcmpi(cnames, 'CO2'), 1);
+assert(~isempty(idxCO2), 'carbonateBuffer requires an EOS CO2 component.');
+assert(isfield(state, 'Z_L'), ...
+    'carbonateBuffer requires the liquid EOS Z-factor.');
+
+x = model.getProp(state, 'x');
+if iscell(x)
+    xCO2 = x{idxCO2};
+else
+    xCO2 = x(:, idxCO2);
+end
+
+liquid = model.getLiquidIndex();
+s = model.getProp(state, 's');
+if iscell(s)
+    sL = max(s{liquid}, 0);
+else
+    sL = max(s(:, liquid), 0);
+end
+
+rhoMolarL = model.EOSModel.PropertyModel.computeMolarDensity( ...
+    model.EOSModel, state.pressure, x, state.Z_L, state.T, true);
+poreVolume = model.PVTPropertyFunctions.get(model, state, 'PoreVolume');
+hco3 = max(model.getProp(state, 'hco3'), 0);
+carbonMoles = poreVolume.*sL.*(rhoMolarL.*xCO2 + hco3);
+end
+
+function state = storeH2ConsumptionRate(model, state)
+% Store the converged H2 molar sink for post-processing.
+bcrm = model.biochemFluid;
+nreact = bcrm.nbioreact;
+liquid = model.getLiquidIndex();
+psigrowth = model.FlowPropertyFunctions.get(model, state, 'CarbonLimitedGrowthRate');
+bmass = model.PVTPropertyFunctions.get(model, state, 'BacterialMass');
+rho = model.PVTPropertyFunctions.get(model, state, 'Density');
+if iscell(rho)
+    rhoL = rho{liquid};
+else
+    rhoL = rho(:, liquid);
+end
+
+rate = zeros(model.G.cells.num, nreact);
+for i = 1:nreact
+    if iscell(psigrowth)
+        growth = psigrowth{i};
+    else
+        growth = psigrowth(:, i);
+    end
+    if iscell(bmass)
+        mass = bmass{i};
+    else
+        mass = bmass(:, i);
+    end
+    rate(:, i) = value(bcrm.nbactMax(i).*growth.*mass./(bcrm.Y_H2(i).*rhoL));
+end
+state.h2ConsumptionRate = rate;
+end
+
+function state = accumulateMrstMonodComH2Consumption(state0, state, dt, nc, nreact)
+% Keep an exact candidate-step reaction extent across adaptive substeps.
+%
+% NonLinearSolver calls updateAfterConvergence once for each accepted
+% ministep. The instantaneous final rate alone cannot represent the
+% reaction extent of the enclosing nominal Picard timestep.
+if isfield(state0, 'phreeqcMrstMonodComCumulativeH2ConsumptionMoles')
+    cumulative = value(state0.phreeqcMrstMonodComCumulativeH2ConsumptionMoles);
+else
+    cumulative = zeros(nc, nreact);
+end
+assert(isequal(size(cumulative), [nc, nreact]) && ...
+    all(isfinite(cumulative(:)) & cumulative(:) >= 0), ...
+    'mrst-monod-com cumulative H2 consumption has invalid dimensions or values.');
+state.phreeqcMrstMonodComCumulativeH2ConsumptionMoles = ...
+    cumulative + max(value(state.h2ConsumptionRate), 0).*dt;
 end
 
 %{

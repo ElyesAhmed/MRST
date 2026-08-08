@@ -26,6 +26,8 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
                 ffd = model.FacilityFlowDiscretization;
                 % Note: BacterialMass is already registered in ReservoirModel's PVTPropertyFunctions
                 ffd = ffd.setStateFunction('PsiGrowthRate', GrowthBactRateSRC(model));
+                ffd = ffd.setStateFunction('CarbonLimitedGrowthRate', ...
+                    CarbonLimitedGrowthRate(model));
                 ffd = ffd.setStateFunction('PsiDecayRate', DecayBactRateSRC(model));
                 ffd = ffd.setStateFunction('BactConvRate', BactConvertionRate(model));
                 if isprop(rm, 'sulfateReduction') && rm.sulfateReduction
@@ -76,18 +78,19 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
                 return;
             end
 
-            reg = 1.0e-10;
-            flowState = fd.buildFlowState(model, state, state0, dt);
-            psigrowth = model.getProps(flowState, 'PsiGrowthRate');  % Psigrowthmax * axH2 * axsub [1/s]
-            psidecay  = model.getProps(flowState, 'PsiDecayRate');   % bbact * nbact [1/s]
-            bmass     = rm.PVTPropertyFunctions.get(rm, state, 'BacterialMass');  % pv * S_l * rho_l * nbact [kg]
-
-            % Direct (g-d)*mass formulation using BacterialMass
             nbioreact=bcrm.nbioreact;
             src_growthdecay = cell(1,nbioreact);
             [src_growthdecay{:}] = deal(0);
-            for i=1:nbioreact
-                src_growthdecay{i} = (psigrowth{i} - psidecay{i}).* bmass{i} - reg .* bmass{i};
+            if ~(ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
+                    rm.isUgfactComPhreeqcBackend())
+                reg = 1.0e-10;
+                flowState = fd.buildFlowState(model, state, state0, dt);
+                psigrowth = model.getProps(flowState, 'CarbonLimitedGrowthRate');
+                psidecay  = model.getProps(flowState, 'PsiDecayRate');   % bbact * nbact [1/s]
+                bmass     = rm.PVTPropertyFunctions.get(rm, state, 'BacterialMass');  % pv * S_l * rho_l * nbact [kg]
+                for i=1:nbioreact
+                    src_growthdecay{i} = (psigrowth{i} - psidecay{i}).* bmass{i} - reg .* bmass{i};
+                end
             end
 
             % ===== NEW: Well bacteria source (advective transport) =====
@@ -170,6 +173,55 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
 
             src = cell(1, 2);
             for i = 1:2
+                src{i} = src_reaction{i} + src_well{i};
+            end
+        end
+
+        %-----------------------------------------------------------------%
+        function src = getAqueousTracerSources(model, fd, state, state0, dt)
+            % Reaction and well sources for all mobile aqueous tracers.
+            % Ca/Mg are analytical totals updated by the post-step
+            % PHREEQC split, so their in-step reaction sources are zero.
+            rm = model.ReservoirModel;
+            if isempty(rm) || ~rm.hasMobileAqueousTracers()
+                src = {};
+                return;
+            end
+
+            tracerNames = rm.getAqueousTracerNames();
+            ntracer = numel(tracerNames);
+            src_reaction = cell(1, ntracer);
+            [src_reaction{:}] = deal(0);
+            if rm.sulfateReduction && ~(ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
+                    rm.isUgfactComPhreeqcBackend())
+                flowState = fd.buildFlowState(model, state, state0, dt);
+                srbSource = model.getProps(flowState, 'SRBTracerConvRate');
+                src_reaction{strcmp(tracerNames, 'SO4')} = srbSource{1};
+                src_reaction{strcmp(tracerNames, 'HS')} = srbSource{2};
+            end
+
+            % Producers remove the cell concentration. The benchmark has
+            % pure-H2 injection, so all aqueous tracer concentrations at
+            % liquid injectors remain zero as in the previous SO4/HS path.
+            map = model.getProp(state, 'FacilityWellMapping');
+            src_well = cell(1, ntracer);
+            [src_well{:}] = deal(0);
+            if ~isempty(map.cells)
+                q_ph = model.getProp(state, 'PhaseFlux');
+                q_l = q_ph{rm.getLiquidIndex()};
+                nc = rm.G.cells.num;
+                nf = numel(map.cells);
+                S = sparse(map.cells, (1:nf)', 1, nc, nf);
+                for i = 1:ntracer
+                    concentration = rm.getProp(state, lower(tracerNames{i}));
+                    q_tracer = q_l .* concentration(map.cells);
+                    q_tracer(q_l > 0) = 0;
+                    src_well{i} = S*q_tracer;
+                end
+            end
+
+            src = cell(1, ntracer);
+            for i = 1:ntracer
                 src{i} = src_reaction{i} + src_well{i};
             end
         end

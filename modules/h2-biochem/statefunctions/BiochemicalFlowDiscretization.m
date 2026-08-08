@@ -59,8 +59,10 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
                     props = props.setStateFunction('ChemoBactFlux', ChemotaxisBactFlux(model));
                 end
 
-                if isprop(model, 'sulfateReduction') && model.sulfateReduction
+                if model.hasMobileAqueousTracers()
+                    if model.sulfateReduction
                     props = props.setStateFunction('SRBTracerConvRate', SRBTracerConvRate(model));
+                    end
 
                     if (isprop(model, 'molecularDispersion') && model.molecularDispersion) || ...
                             (isprop(model, 'molecularDiffusion') && model.molecularDiffusion)
@@ -119,9 +121,9 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
 
         %-----------------------------------------------------------------%
         function [acc, tflux, name, type] = tracerConservationEquation(fd, model, state, state0, dt)
-            % Mass conservation for the SO4/HS aqueous tracers.
+            % Mass conservation for mobile non-EOS aqueous tracers.
             %
-            % Unlike EOS components, SO4 and HS never enter the flash:
+            % Unlike EOS components, these tracers never enter the flash:
             % they are advected with the liquid phase, using the same
             % interior Darcy flux/upstream weighting as any other
             % dissolved species (see PhaseFlux, PhaseUpwindFlag), with no
@@ -132,9 +134,11 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
             % volatile EOS components via ComponentTotalFluxForBio.
             tracermass  = model.getProp(state, 'AqueousTracerMass');
             tracermass0 = model.getProp(state0, 'AqueousTracerMass');
+            name = model.getAqueousTracerNames();
+            ntracer = numel(name);
 
-            acc = cell(1, 2);
-            for i = 1:2
+            acc = cell(1, ntracer);
+            for i = 1:ntracer
                 acc{i} = (tracermass{i} - tracermass0{i}) ./ dt;
             end
 
@@ -144,24 +148,24 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
             qL    = q{L_ix};
             flagL = flag{L_ix};
 
-            so4 = model.getProp(state, 'so4');
-            hs  = model.getProp(state, 'hs');
-            c   = {so4, hs};
+            c = cell(1, ntracer);
+            for i = 1:ntracer
+                c{i} = model.getProp(state, lower(name{i}));
+            end
 
-            tflux = cell(1, 2);
-            for i = 1:2
+            tflux = cell(1, ntracer);
+            for i = 1:ntracer
                 tflux{i} = model.operators.faceUpstr(flagL, c{i}) .* qL;
             end
 
             if model.molecularDispersion || model.molecularDiffusion
                 Jdiff = model.getProp(state, 'DiffusiveTracerFlux');
-                for i = 1:2
+                for i = 1:ntracer
                     tflux{i} = tflux{i} + Jdiff{i};
                 end
             end
 
-            name = {'SO4', 'HS'};
-            type = {'cell', 'cell'};
+            type = repmat({'cell'}, 1, ntracer);
         end
 
         %-----------------------------------------------------------------%

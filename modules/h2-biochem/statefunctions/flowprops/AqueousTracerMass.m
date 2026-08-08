@@ -1,18 +1,18 @@
 classdef AqueousTracerMass < StateFunction
-    % Mass of a non-volatile aqueous tracer (SO4, HS) per grid cell.
+    % Moles of mobile non-volatile aqueous tracers per grid cell.
     %
     % SYNOPSIS:
     %   tm = AqueousTracerMass(model)
     %
     % DESCRIPTION:
-    %   Computes the mass of the SO4/HS aqueous tracers in each grid
+    %   Computes the amount of each active aqueous tracer in each grid
     %   cell, accounting for pore volume and liquid saturation. These
     %   tracers are non-volatile: unlike EOS components, they never enter
     %   the flash and are transported only by advection with the liquid
     %   phase (see BiochemicalFlowDiscretization.tracerConservationEquation).
     %
     % REQUIRED PARAMETERS:
-    %   model - Reservoir model with sulfateReduction enabled
+    %   model - Reservoir model with mobile aqueous tracers enabled
     %
     % SEE ALSO:
     %   BacterialMass, BiochemistryModel, SRBTracerConvRate
@@ -20,7 +20,8 @@ classdef AqueousTracerMass < StateFunction
     methods
         function tm = AqueousTracerMass(model, varargin)
             tm@StateFunction(model, varargin{:});
-            tm = tm.dependsOn({'so4', 'hs'}, 'state');
+            tracerNames = model.getAqueousTracerNames();
+            tm = tm.dependsOn(cellfun(@lower, tracerNames, 'UniformOutput', false), 'state');
             tm = tm.dependsOn('s', 'state');
             tm = tm.dependsOn('PoreVolume', 'PVTPropertyFunctions');
             tm.label = 'M_{tracer}';
@@ -36,10 +37,12 @@ classdef AqueousTracerMass < StateFunction
                 sL = max(s(:, L_ix), 1.0e-8);
             end
 
-            so4 = model.getProp(state, 'so4');
-            hs  = model.getProp(state, 'hs');
-
-            m = {pv .* sL .* so4, pv .* sL .* hs};
+            tracerNames = model.getAqueousTracerNames();
+            m = cell(1, numel(tracerNames));
+            for i = 1:numel(tracerNames)
+                concentration = model.getProp(state, lower(tracerNames{i}));
+                m{i} = pv .* sL .* concentration;
+            end
         end
     end
 end

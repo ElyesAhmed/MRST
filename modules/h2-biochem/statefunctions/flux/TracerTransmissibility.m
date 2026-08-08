@@ -1,5 +1,5 @@
 classdef TracerTransmissibility < StateFunction
-    % Computes face-based transmissibility for the SO4/HS aqueous tracers
+    % Computes face-based transmissibility for mobile aqueous tracers
     % from their cell-based effective diffusivity.
     %
     % SYNOPSIS:
@@ -15,8 +15,8 @@ classdef TracerTransmissibility < StateFunction
     %   model - BiochemistryModel with TracerDiffusivity state function
     %
     % RETURNS:
-    %   T_face - Cell array T_face{i}, i = 1 (SO4), 2 (HS), of face-based
-    %            transmissibilities (nInternalFaces x 1).
+    %   T_face - Cell array of face-based transmissibilities
+    %            (nInternalFaces x 1), ordered by getAqueousTracerNames.
     %
     % SEE ALSO:
     %   TracerDiffusivity, DynamicFlowTransmissibility, DiffusiveTracerFlux
@@ -42,8 +42,9 @@ classdef TracerTransmissibility < StateFunction
             op = model.operators;
             nInternal = numel(op.internalConn);
 
-            T_face = cell(1, 2);
-            for i = 1:2
+            tracerNames = model.getAqueousTracerNames();
+            T_face = cell(1, numel(tracerNames));
+            for i = 1:numel(tracerNames)
                 D = D_eff_cell{i};
                 if isnumeric(D) && all(D(:) == 0)
                     T_face{i} = zeros(nInternal, 1);

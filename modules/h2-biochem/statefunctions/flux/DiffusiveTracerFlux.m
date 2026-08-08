@@ -1,11 +1,11 @@
 classdef DiffusiveTracerFlux < StateFunction
-    % Diffusive/dispersive flux of the SO4/HS aqueous tracers.
+    % Diffusive/dispersive flux of mobile aqueous tracers.
     %
     % SYNOPSIS:
     %   flux = DiffusiveTracerFlux(model)
     %
     % DESCRIPTION:
-    %   Computes the face-wise diffusive/dispersive flux of the SO4/HS
+    %   Computes the face-wise diffusive/dispersive flux of the active
     %   tracers in the liquid phase as
     %
     %       J_i = - T_i .* Grad(c_i)
@@ -30,7 +30,8 @@ classdef DiffusiveTracerFlux < StateFunction
             df = merge_options(df, varargin{:});
 
             df = df.dependsOn('TracerTransmissibility');
-            df = df.dependsOn({'so4', 'hs'}, 'state');
+            tracerNames = model.getAqueousTracerNames();
+            df = df.dependsOn(cellfun(@lower, tracerNames, 'UniformOutput', false), 'state');
 
             df.label = 'J_{tracer}^{diff}';
         end
@@ -39,13 +40,11 @@ classdef DiffusiveTracerFlux < StateFunction
             op = model.operators;
             T = prop.getEvaluatedDependencies(state, 'TracerTransmissibility');
 
-            so4 = model.getProp(state, 'so4');
-            hs  = model.getProp(state, 'hs');
-            c   = {so4, hs};
-
-            J = cell(1, 2);
-            for i = 1:2
-                J{i} = - T{i} .* op.Grad(c{i});
+            tracerNames = model.getAqueousTracerNames();
+            J = cell(1, numel(tracerNames));
+            for i = 1:numel(tracerNames)
+                c = model.getProp(state, lower(tracerNames{i}));
+                J{i} = - T{i} .* op.Grad(c);
             end
         end
     end

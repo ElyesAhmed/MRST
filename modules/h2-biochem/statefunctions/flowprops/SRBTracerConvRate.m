@@ -54,6 +54,9 @@ classdef SRBTracerConvRate < StateFunction
             scr = scr.dependsOn('PsiGrowthRate', 'state');
             scr = scr.dependsOn('so4', 'state');
             scr = scr.dependsOn('s', 'state');
+            if isprop(model, 'phreeqcTimestepCoupling') && model.phreeqcTimestepCoupling
+                scr = scr.dependsOn('phreeqcPH', 'state');
+            end
             scr.label = 'Q_{SRB,tracer}';
         end
 
@@ -65,6 +68,12 @@ classdef SRBTracerConvRate < StateFunction
             end
             q = {0, 0};
             if isempty(rm) || ~isprop(rm, 'sulfateReduction') || ~rm.sulfateReduction
+                return;
+            end
+            if ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
+                    rm.isUgfactComPhreeqcBackend()
+                % Kinetic sulfate/sulfide changes are supplied by the
+                % post-convergence UGFACT PHREEQC split in this mode.
                 return;
             end
 
@@ -112,7 +121,12 @@ classdef SRBTracerConvRate < StateFunction
             qSO4_bio = qSO4_total ./ rhoL;
             qS2_bio  = qS2_total ./ rhoL;
 
-            fH2S = rm.EOSModel.fractionH2SVolatile(state.T);
+            if isfield(state, 'phreeqcPH')
+                pH = state.phreeqcPH;
+            else
+                pH = [];
+            end
+            fH2S = rm.EOSModel.fractionH2SVolatile(state.T, pH);
 
             % Add Sulfate source from Anhydrous dissolution
             if scr.enable_sulfate_source

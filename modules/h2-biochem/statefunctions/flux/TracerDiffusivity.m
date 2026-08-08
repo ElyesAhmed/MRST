@@ -1,13 +1,13 @@
 classdef TracerDiffusivity < StateFunction
     % Computes cell-based effective dispersive/diffusive diffusivity for
-    % the non-volatile SO4/HS aqueous tracers.
+    % mobile non-volatile aqueous tracers.
     %
     % SYNOPSIS:
     %   d = TracerDiffusivity(model)
     %
     % DESCRIPTION:
     %   Mirrors DispersiveDiffusivity (used for the volatile EOS
-    %   components), but for the liquid-only SO4/HS tracers, which are
+    %   components), but for liquid-only aqueous tracers, which are
     %   never part of the EOS mole-fraction vectors (see
     %   BiochemistryModel.sulfateReduction / AqueousTracerMass):
     %
@@ -38,12 +38,13 @@ classdef TracerDiffusivity < StateFunction
         minDiffusivity = 1e-15;    % reasonable floor for diffusivities
 
         % Reference aqueous molecular diffusivities at infinite dilution
-        % [m^2/s] (order-of-magnitude literature values for the divalent
-        % sulfate ion and the bisulfide ion; no species-specific
-        % correlation is available, unlike the EOS component lookup in
-        % DispersiveDiffusivity).
+        % [m^2/s]. These are configurable approximate values; PHREEQC
+        % supplies speciation but MRST transports the analytical totals.
         D_SO4 = 1.07e-9;
         D_HS  = 1.73e-9;
+        D_HCO3 = 1.18e-9;
+        D_CA = 0.79e-9;
+        D_MG = 0.71e-9;
     end
 
     methods
@@ -107,16 +108,20 @@ classdef TracerDiffusivity < StateFunction
             end
 
             % --- Molecular diffusion (Millington-Quirk tortuosity) ---
-            D_eff = cell(1, 2);
+            tracerNames = model.getAqueousTracerNames();
+            D_eff = cell(1, numel(tracerNames));
             if model.molecularDiffusion
                 phiS = phi .* sL;
                 tau_MQ = max((phiS).^(d.tortuosityExponent) .* (phi.^(-2)), 0);
-
-                D_eff{1} = phi .* sL .* (D_disp + tau_MQ .* max(d.D_SO4, d.minDiffusivity));
-                D_eff{2} = phi .* sL .* (D_disp + tau_MQ .* max(d.D_HS,  d.minDiffusivity));
-            else
-                D_eff{1} = phi .* sL .* D_disp;
-                D_eff{2} = phi .* sL .* D_disp;
+            end
+            for i = 1:numel(tracerNames)
+                Dref = d.(['D_', upper(tracerNames{i})]);
+                if model.molecularDiffusion
+                    D_eff{i} = phi .* sL .* (D_disp + ...
+                        tau_MQ .* max(Dref, d.minDiffusivity));
+                else
+                    D_eff{i} = phi .* sL .* D_disp;
+                end
             end
         end
     end

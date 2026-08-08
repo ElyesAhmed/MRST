@@ -16,21 +16,24 @@ H2_cum_per_cell = zeros(nCells, nSteps);
 for t = 1:nSteps
     state = states{t};
 
-    % This is the same evaluated kinetic rate and bacterial mass used by
-    % BactConvertionRate. BacterialMass already contains pore volume,
-    % saturation, density, and any dynamic porosity from bio-clogging.
-    psiGrowth = model.FlowPropertyFunctions.get(model, state, 'PsiGrowthRate');
-    bacterialMass = model.PVTPropertyFunctions.get(model, state, 'BacterialMass');
-    density = model.PVTPropertyFunctions.get(model, state, 'Density');
-    psiGrowth = reactionValue(psiGrowth, idxReaction);
-    bacterialMass = reactionValue(bacterialMass, idxReaction);
-    rhoL = phaseValue(density, model.getLiquidIndex());
+    if model.isMrstMonodComPhreeqcBackend() && ...
+            isfield(state, 'phreeqcMrstMonodComCumulativeH2ConsumptionMoles')
+        cumulative = state.phreeqcMrstMonodComCumulativeH2ConsumptionMoles(:, idxReaction);
+        if t == 1
+            increment = cumulative;
+        else
+            previous = states{t - 1}.phreeqcMrstMonodComCumulativeH2ConsumptionMoles(:, idxReaction);
+            increment = cumulative - previous;
+        end
+        H2_rate_per_cell(:, t) = increment./schedule.step.val(t);
+        H2_cum_per_cell(:, t) = cumulative;
+        continue;
+    end
 
-    % BiochemistryModel inserts BactConvRate divided by the liquid density
-    % into the component equations. Apply the same scaling here so this
-    % post-processing reports the H2 consumption represented by the solve.
-    H2_rate_per_cell(:, t) = bf.nbactMax(idxReaction).*psiGrowth.* ...
-        bacterialMass./(bf.Y_H2(idxReaction).*rhoL);
+    assert(isfield(state, 'h2ConsumptionRate'), ...
+        ['Saved states do not contain the converged H2 source rate. ', ...
+         'Rerun the simulation before post-processing H2 consumption.']);
+    H2_rate_per_cell(:, t) = state.h2ConsumptionRate(:, idxReaction);
 
     if t == 1
         H2_cum_per_cell(:, t) = H2_rate_per_cell(:, t).*schedule.step.val(t);
@@ -38,21 +41,5 @@ for t = 1:nSteps
         H2_cum_per_cell(:, t) = H2_cum_per_cell(:, t - 1) + ...
             H2_rate_per_cell(:, t).*schedule.step.val(t);
     end
-end
-end
-
-function values = reactionValue(data, idxReaction)
-if iscell(data)
-    values = data{idxReaction};
-else
-    values = data(:, idxReaction);
-end
-end
-
-function values = phaseValue(data, idxPhase)
-if iscell(data)
-    values = data{idxPhase};
-else
-    values = data(:, idxPhase);
 end
 end

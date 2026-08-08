@@ -14,7 +14,7 @@ classdef BactConvertionRate < StateFunction
     %
     %   The conversion rate for each component c is computed as:
     %
-    %       qbiot(c) = gamma_norm(c) * PsiGrowthRate * bmass / Y_H2
+    %       qbiot(c) = gamma_norm(c) * CarbonLimitedGrowthRate * bmass / Y_H2
     %
     %   where:
     %       gamma_norm = mass-weighted stoichiometric coefficient,
@@ -59,10 +59,12 @@ classdef BactConvertionRate < StateFunction
 
             bcr@StateFunction(model, varargin{:});
 
-            % Dependencies: pore volume, saturation, and bacterial concentration
-            % Note: Direct calculation avoids redundant Density computation through BacterialMass
-            bcr = bcr.dependsOn('BacterialMass', 'PVTPropertyFunctions');
-            bcr = bcr.dependsOn('PsiGrowthRate', 'state');
+            % BacterialMass is evaluated on the reservoir model below:
+            % this state function is also registered on the facility model.
+            bcr = bcr.dependsOn('CarbonLimitedGrowthRate', 'state');
+            if isprop(model, 'phreeqcTimestepCoupling') && model.phreeqcTimestepCoupling
+                bcr = bcr.dependsOn('phreeqcPH', 'state');
+            end
 
             bcr.label = 'Q_biot';
         end
@@ -95,6 +97,13 @@ classdef BactConvertionRate < StateFunction
             if ~(rm.bacteriamodel && rm.liquidPhase)
                 return;
             end
+            if ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
+                    rm.isUgfactComPhreeqcBackend()
+                % The UGFACT COM split owns MET/ACE/SRB chemistry after
+                % convergence. Keep the MRST transport equations, but do
+                % not apply their microbial component sources as well.
+                return;
+            end
 
             % Get biochemical fluid properties
             bcrm = rm.biochemFluid;
@@ -114,7 +123,7 @@ classdef BactConvertionRate < StateFunction
 
             % Get primary state variables directly (avoids redundant Density calculations)
             bmass = rm.PVTPropertyFunctions.get(rm, state, 'BacterialMass');
-            psigrowth = model.getProps(state, 'PsiGrowthRate');
+            psigrowth = model.getProps(state, 'CarbonLimitedGrowthRate');
 
             % Get model parameters
             Y_H2 = bcrm.Y_H2;                      % Reaction yield scales
@@ -177,7 +186,12 @@ classdef BactConvertionRate < StateFunction
                 % flash mole fractions directly (see the note in
                 % SoreideWhitsonEos.getMixtureFugacityCoefficients).
                 if isSRB && ~isempty(idxprod)
-                    fH2S = rm.EOSModel.fractionH2SVolatile(state.T);
+                    if isfield(state, 'phreeqcPH')
+                        pH = state.phreeqcPH;
+                    else
+                        pH = [];
+                    end
+                    fH2S = rm.EOSModel.fractionH2SVolatile(state.T, pH);
                 end
 
                 % Apply normalized stoichiometric coefficients to each component

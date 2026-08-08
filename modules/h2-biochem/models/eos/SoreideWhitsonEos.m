@@ -430,11 +430,12 @@ classdef SoreideWhitsonEos < EquationOfStateModel
             model.msalt = msalt_new;
         end
 
-        function f_H2S = fractionH2SVolatile(model, T)
+        function f_H2S = fractionH2SVolatile(model, T, pH)
             % Henderson-Hasselbalch speciation fraction of total dissolved
             % sulfide (H2S(aq) + HS-) that is present as volatile,
-            % molecular H2S at the given temperature, the model's current
-            % pH and salinity.
+            % molecular H2S at the given temperature, pH, and the model's
+            % current salinity. If pH is omitted, use the model's fixed
+            % pH for backwards compatibility.
             %
             % This is the split point between the two non-volatile
             % sulfide species handled outside the EOS (SO4^2- and HS-,
@@ -448,10 +449,13 @@ classdef SoreideWhitsonEos < EquationOfStateModel
             % (see the note in getMixtureFugacityCoefficients) -- that
             % breaks the flash/stability solver. Apply the split at the
             % source term instead.
+            if nargin < 3 || isempty(pH)
+                pH = model.pH;
+            end
             pKa = model.pKa_H2S + model.pKa_T_coef * (T - 273.15) + ...
                 model.pKa_sal_coef * model.msalt;
             Ka = 10.^(-pKa);
-            H_conc = 10^(-model.pH);
+            H_conc = 10.^(-pH);
             f_H2S = 1./(1 + Ka./H_conc);
         end
 

@@ -33,20 +33,17 @@ classdef DecayBactRateSRC < StateFunction
             % Constructor for bacterial decay rate calculator
             gp@StateFunction(model, varargin{:});
 
-            % Define dependencies - kinetic coefficient based on current concentration
-            gp = gp.dependsOn('nbact', 'state');          % Bacterial concentration
+            % Quadratic legacy decay depends on biomass; first-order
+            % benchmark decay retains this harmless dependency so both
+            % formulations share the same state-function interface.
+            gp = gp.dependsOn('nbact', 'state');
 
             % Set label for output
             gp.label = 'Psi_{decay}';
         end
 
         function Psidecay = evaluateOnDomain(prop, model, state)
-            % Compute density-dependent decay rate coefficient
-            %
-            % For density-dependent decay: b*nbact^2 = (b*nbact) * nbact
-            % Returns: bbact * nbact [1/s]
-            % Used with BacterialMass: source = Psidecay * BacterialMass / nbact^(scaling)
-            % Or more directly: decay_contribution = Psidecay * nbact (when multiplied by mass)
+            % Compute the specific decay rate coefficient [1/s].
             %
             % PARAMETERS:
             %   prop  - Property function instance
@@ -92,18 +89,20 @@ classdef DecayBactRateSRC < StateFunction
             % Get required state variables
             nbact = rm.getProp(state, 'nbact');
 
-            % Compute density-dependent decay coefficient: b * nbact [1/s]
-            % When multiplied by BacterialMass and divided by nbact, gives b*nbact^2
             for i=1:nbioreact
-                % Extract liquid phase properties
                 if iscell(nbact)
                     nbacti=nbact{i};
                 else
                     nbacti=nbact(:,i);
                 end
                 bbact = bcrm.bbact(i);
-                nbact_pos = max(nbacti, 0);
-                Psidecay{i} = bbact .* nbact_pos;
+                if rm.bacterialDecayOrder == 1
+                    % Paper kinetics: biomass loss is b*M.
+                    Psidecay{i} = bbact + 0.*nbacti;
+                else
+                    % Legacy h2-biochem kinetics: biomass loss is b*n*M.
+                    Psidecay{i} = bbact .* max(nbacti, 0);
+                end
             end
         end
     end

@@ -1,8 +1,8 @@
-for aa =1:10
-    states = scenarios{aa}.states;
-    ws = scenarios{aa}.ws;
-    model = scenarios{aa}.model;
-    % schedule = scenarios{aa}.schedule;
+for aa =1:1
+    states = statesMonod; %scenarios{aa}.states;
+    ws = wsMonod;%scenarios{aa}.ws;
+    %model = scenarios{aa}.model;
+    %schedule = scenarios{aa}.schedule;
 
     assert(numel(states) == numel(schedule.step.val), ...
         'states and schedule must contain the same number of timesteps.');
@@ -108,5 +108,6 @@ for aa =1:10
         title('Spatial Distribution of H₂ Consumption');
         legend(reactionNames, 'Location', 'best');
         grid on;
+        ylim([0, 250]);
     end
 end

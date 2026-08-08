@@ -1,9 +1,10 @@
 function [biochemFluid, model, schedule, state0] = setupH2StorageExampleWithSRB_benchmark(varargin)
 % Set up the H2Storage1D benchmark with tracer-based sulfate reduction.
 %
-% This retains the h2-biochem reactions and the 95/5 H2/CO2 injection
-% extension, with either the moderate- or high-rate H2Storage1D kinetics.
-% PHREEQC mineral reactions and pH evolution are intentionally excluded.
+% This follows the H2Storage1D pure-H2 injection case, with either the
+% moderate- or high-rate H2Storage1D kinetics.
+% PHREEQC mineral reactions and pH evolution are excluded unless the
+% optional post-timestep PHREEQC coupling is enabled.
 %
 % OPTIONAL PARAMETERS (property/value pairs):
 %   rate                - 'medrate' (default) or 'highrate'. Selects the
@@ -15,25 +16,146 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExampleWithSRB_
 %   molecularDiffusion  - Enable molecular diffusion (default: false)
 %   molecularDispersion - Enable mechanical dispersion (default: false)
 %   bioClogging         - Enable bio-clogging (default: false)
-%   nbact0              - Initial normalized bacterial state (default: 60.6)
-%   injectionCO2        - CO2 mole fraction in injected gas (default: 0.05)
+%   carbonateBuffer     - Enable a finite fixed-pH HCO3-/CO2 buffer
+%                         (default: false)
+%   initialHCO3         - Initial bicarbonate molality when the buffer is
+%                         enabled (default: Bentheimer value, 1.119e-3)
+%   equilibrateInitialCO2 - Calibrate initial global CO2 so its flashed
+%                         liquid mole fraction is in ideal fixed-pH
+%                         equilibrium with initialHCO3 (default: false)
+%   phreeqcInitialization - Initialize aqueous carbon, pH, sulfate, and
+%                         flashed liquid CO2 from PhreeqcMatlab (default:
+%                         false)
+%   phreeqcDatabaseFile  - PHREEQC database used for initialization and
+%                         timestep coupling. For either COM backend this
+%                         must be an absolute PHREEQC_Modified.DAT path.
+%   phreeqcBackend       - 'standard-pitzer' (default, PhreeqcMatlab) or
+%                         'ugfact-com' (Windows IPhreeqcCOM kinetics), or
+%                         'mrst-monod-com' (Windows IPhreeqcCOM equilibrium).
+%   phreeqcComProgId     - Registered Windows IPhreeqcCOM ProgID for
+%                         COM backends (default: IPhreeqcCOM.Object)
+%   phreeqc*WtFraction   - Dolomite, calcite, brucite, and quartz rock
+%                         weight fractions used to seed PHREEQC minerals
+%   phreeqcTimestepCoupling - After every converged timestep, equilibrate
+%                         each cell with the selected PHREEQC backend
+%                         (default: false). standard-pitzer requires
+%                         phreeqcInitialization; COM backends do not.
+%                         mrst-monod-com must be run with
+%                         simulateH2StorageMrstMonodComPicard, not direct
+%                         simulateScheduleAD.
+%   phreeqcConservativeCarbonTransfer - Conservatively transfer the
+%                         PHREEQC total-inorganic-carbon change from
+%                         mineral equilibrium to EOS CO2 (default: false;
+%                         requires phreeqcTimestepCoupling)
+%   phreeqcPicardMaxIterations, phreeqcPicardRelaxation,
+%   phreeqcPicardAbsoluteTolerance, phreeqcPicardRelativeTolerance,
+%   phreeqcPicardPHTolerance, phreeqcPicardPkaTolerance - mrst-monod-com
+%                         outer Picard controls.
+%   phreeqcUgfactInitialC4 - Initial nonvolatile C(4) molality for the
+%                         ugfact-com benchmark (default: 1.370e-3).
+%   paperBiomassKinetics - Use first-order biomass decay and the paper's
+%                         Nmax/N0 = 1e4 population range (default: false)
+%   nbact0              - Initial normalized bacterial state, scalar or
+%                         [MET ACE SRB] vector (default: 60.6)
+%   injectionCO2        - CO2 mole fraction in injected gas (default: 0,
+%                         matching the paper; nonzero values are extensions)
 
 require ad-props compositional deckformat h2-biochem
 
 opt = struct(...
-    'rate', 'highrate', ...
+    'rate', 'medrate', ...
     'bacteriamodel', true, ...
     'bactDiffusion', false, ...
     'chemotaxisEffect', false, ...
     'molecularDiffusion', false, ...
     'molecularDispersion', false, ...
     'bioClogging', false, ...
+    'carbonateBuffer', true, ...
+    'initialHCO3', 1.1119e-3, ...
+    'equilibrateInitialCO2', true, ...
+    'phreeqcInitialization', false, ...
+    'phreeqcTimestepCoupling', false, ...
+    'phreeqcConservativeCarbonTransfer', false, ...
+    'phreeqcBackend', 'standard-pitzer', ...
+    'phreeqcDatabaseFile', '', ...
+    'phreeqcComProgId', 'IPhreeqcCOM.Object', ...
+    'phreeqcPicardMaxIterations', 30, ...
+    'phreeqcPicardRelaxation', 0.25, ...
+    'phreeqcPicardAbsoluteTolerance', 1e-8, ...
+    'phreeqcPicardRelativeTolerance', 1e-2, ...
+    'phreeqcPicardPHTolerance', 2e-2, ...
+    'phreeqcPicardPkaTolerance', 2e-2, ...
+    'phreeqcUgfactInitialC4', 1.370e-3, ...
+    'phreeqcPicardReactionAbsoluteTolerance', 1e-12, ...
+    'phreeqcPicardReactionRelativeTolerance', 1e-3, ...
+    'phreeqcDolomiteWtFraction', 0.02, ...
+    'phreeqcCalciteWtFraction', 0, ...
+    'phreeqcBruciteWtFraction', 0, ...
+    'phreeqcQuartzWtFraction', 0.98, ...
+    'paperBiomassKinetics', true, ...
     'nbact0', 60.6, ...
-    'injectionCO2', 0.025);
+    'injectionCO2', 0.0);
 opt = merge_options(opt, varargin{:});
 
 assert(opt.injectionCO2 >= 0 && opt.injectionCO2 <= 1, ...
     'injectionCO2 must be a mole fraction between zero and one.');
+assert(ischar(opt.phreeqcBackend) || ...
+    (isstring(opt.phreeqcBackend) && isscalar(opt.phreeqcBackend)), ...
+    'phreeqcBackend must be a character vector or scalar string.');
+phreeqcBackend = lower(strtrim(char(opt.phreeqcBackend)));
+assert(ismember(phreeqcBackend, ...
+    {'standard-pitzer', 'ugfact-com', 'mrst-monod-com'}), ...
+    ['phreeqcBackend must be ''standard-pitzer'', ''ugfact-com'', or ', ...
+     '''mrst-monod-com''.']);
+if opt.phreeqcTimestepCoupling
+    assert(opt.carbonateBuffer && opt.bacteriamodel, ...
+        ['phreeqcTimestepCoupling requires carbonateBuffer=true and ', ...
+         'bacteriamodel=true so HCO3 and SO4 tracers are active.']);
+    if strcmp(phreeqcBackend, 'standard-pitzer')
+        assert(opt.phreeqcInitialization, ...
+            ['standard-pitzer phreeqcTimestepCoupling requires ', ...
+             'phreeqcInitialization=true to establish the aqueous and mineral state.']);
+    else
+        assert(ispc, ['COM PHREEQC backends require Windows and ', ...
+            'a registered IPhreeqcCOM server.']);
+        assert(~opt.phreeqcConservativeCarbonTransfer, ...
+            ['phreeqcConservativeCarbonTransfer applies only to ', ...
+             'standard-pitzer; COM backends transfer all reactive EOS ', ...
+             'component inventories directly.']);
+        assert(~opt.phreeqcInitialization, ...
+            ['COM backends use PHREEQC_Modified.DAT through IPhreeqcCOM; ', ...
+             'set phreeqcInitialization=false (it is a standard-Pitzer ', ...
+             'PhreeqcMatlab initialization).']);
+        assert(~isempty(opt.phreeqcDatabaseFile) && ...
+            isAbsolutePhreeqcPath(opt.phreeqcDatabaseFile), ...
+            ['COM PHREEQC backends require phreeqcDatabaseFile to be an explicit ', ...
+             'absolute path to PHREEQC_Modified.DAT.']);
+        assert(isfile(opt.phreeqcDatabaseFile), ...
+            'COM PHREEQC database not found: %s', opt.phreeqcDatabaseFile);
+        assert(contains(lower(char(opt.phreeqcDatabaseFile)), 'phreeqc_modified.dat'), ...
+            ['COM PHREEQC backends require PHREEQC_Modified.DAT, not a ', ...
+             'standard PHREEQC database: %s'], opt.phreeqcDatabaseFile);
+    end
+end
+assert(~opt.phreeqcConservativeCarbonTransfer || opt.phreeqcTimestepCoupling, ...
+    ['phreeqcConservativeCarbonTransfer requires ', ...
+     'phreeqcTimestepCoupling=true.']);
+if strcmp(phreeqcBackend, 'mrst-monod-com')
+    validateattributes(opt.phreeqcPicardMaxIterations, {'numeric'}, ...
+        {'scalar', 'integer', 'finite', '>=', 1}, mfilename, ...
+        'phreeqcPicardMaxIterations');
+    validateattributes(opt.phreeqcPicardRelaxation, {'numeric'}, ...
+        {'scalar', 'real', 'finite', '>', 0, '<=', 1}, mfilename, ...
+        'phreeqcPicardRelaxation');
+    picardTolerances = {'phreeqcPicardAbsoluteTolerance', ...
+        'phreeqcPicardRelativeTolerance', 'phreeqcPicardPHTolerance', ...
+        'phreeqcPicardReactionAbsoluteTolerance', ...
+        'phreeqcPicardReactionRelativeTolerance'};
+    for i = 1:numel(picardTolerances)
+        validateattributes(opt.(picardTolerances{i}), {'numeric'}, ...
+            {'scalar', 'real', 'finite', 'positive'}, mfilename, picardTolerances{i});
+    end
+end
 
 rateCase = lower(char(opt.rate));
 switch rateCase
@@ -120,12 +242,106 @@ biochemFluid.nbactMax(idxS) = 1e9;
 pH0 = 6.24;
 initialNaCl = 2.865;
 initialSO4 = 4.664e-3;
+initialHCO3 = opt.initialHCO3;
+if any(strcmp(phreeqcBackend, {'ugfact-com', 'mrst-monod-com'}))
+    % Original H2Storage1D initializes Solution.C4 to 1.370e-3 mol/kgw.
+    validateattributes(opt.phreeqcUgfactInitialC4, {'numeric'}, ...
+        {'scalar', 'real', 'finite', 'positive'}, mfilename, 'phreeqcUgfactInitialC4');
+    initialHCO3 = opt.phreeqcUgfactInitialC4;
+end
+initialCO2Molality = 3.9386e-05;
+carbonateBufferPka1 = 6.35;
+if opt.phreeqcInitialization
+    assert(opt.carbonateBuffer, ...
+        'phreeqcInitialization requires carbonateBuffer=true.');
+    phreeqc = runBentheimerPhreeqcEquilibrium( ...
+        'databaseFile', opt.phreeqcDatabaseFile, ...
+        'dolomiteWtFraction', opt.phreeqcDolomiteWtFraction, ...
+        'calciteWtFraction', opt.phreeqcCalciteWtFraction, ...
+        'bruciteWtFraction', opt.phreeqcBruciteWtFraction, ...
+        'quartzWtFraction', opt.phreeqcQuartzWtFraction);
+    pH0 = phreeqc.aqueous.pH;
+    initialSO4 = phreeqc.aqueous.sulfate;
+    initialHCO3 = phreeqc.aqueous.hco3;
+    initialCO2Molality = phreeqc.aqueous.co2;
+    carbonateBufferPka1 = pH0 - log10(initialHCO3/initialCO2Molality);
+end
 eos = SoreideWhitsonEos(G, compFluid, ...
     'msalt', initialNaCl, ...
     'pH', pH0, ...
     'initial_NaCl', initialNaCl, ...
     'initial_SO4', initialSO4, ...
     'rho_water', 1000);
+phreeqcCouplingOptions = struct( ...
+    'databaseFile', opt.phreeqcDatabaseFile, ...
+    'comProgId', opt.phreeqcComProgId, ...
+    'waterDensity', eos.rho_water, ...
+    'Na', 2.865, ...
+    'Ca', 0.2857, ...
+    'Mg', 0.1144, ...
+    'Cl', 3.655, ...
+    'Si', 9.723e-5, ...
+    'dolomitePhase', 'Dolomite', ...
+    'calcitePhase', 'Calcite', ...
+    'brucitePhase', 'Brucite', ...
+    'quartzPhase', 'Quartz', ...
+    'dolomiteWtFraction', opt.phreeqcDolomiteWtFraction, ...
+    'calciteWtFraction', opt.phreeqcCalciteWtFraction, ...
+    'bruciteWtFraction', opt.phreeqcBruciteWtFraction, ...
+    'quartzWtFraction', opt.phreeqcQuartzWtFraction, ...
+    'initialDolomiteMoles', [], ...
+    'initialCalciteMoles', [], ...
+    'initialBruciteMoles', [], ...
+    'initialQuartzMoles', [], ...
+    'initialDolomiteMolality', [], ...
+    'initialCalciteMolality', [], ...
+    'initialBruciteMolality', [], ...
+    'initialQuartzMolality', []);
+phreeqcCouplingOptions.ugfactMuMET = metabolicGrowthRate(1)*day;
+phreeqcCouplingOptions.ugfactMuACE = metabolicGrowthRate(2)*day;
+phreeqcCouplingOptions.ugfactMuSRB = metabolicGrowthRate(3)*day;
+phreeqcCouplingOptions.ugfactBMET = 0.01*phreeqcCouplingOptions.ugfactMuMET;
+phreeqcCouplingOptions.ugfactBACE = 0.01*phreeqcCouplingOptions.ugfactMuACE;
+phreeqcCouplingOptions.ugfactBSRB = 0.01*phreeqcCouplingOptions.ugfactMuSRB;
+phreeqcCouplingOptions.ugfactYMET = 0.03*4;
+phreeqcCouplingOptions.ugfactYACE = 0.07*4;
+phreeqcCouplingOptions.ugfactYSRB = 0.08*4;
+phreeqcCouplingOptions.ugfactKDMET = h2HalfSaturation(1)*55.5;
+phreeqcCouplingOptions.ugfactKDACE = h2HalfSaturation(2)*55.5;
+phreeqcCouplingOptions.ugfactKDSRB = h2HalfSaturation(3)*55.5;
+phreeqcCouplingOptions.ugfactKAMET = 230e-6;
+phreeqcCouplingOptions.ugfactKAACE = 115.5e-6;
+phreeqcCouplingOptions.ugfactKASRB = 2751.5e-6;
+phreeqcCouplingOptions.ugfactN0 = 1e9;
+phreeqcCouplingOptions.ugfactNmax = 1e13;
+phreeqcCouplingOptions.ugfactCellMass = 1e-14;
+phreeqcCouplingOptions.ugfactBiomassMW = 24.6;
+phreeqcCouplingOptions.ugfactSteps = 3;
+phreeqcCouplingOptions.ugfactInitialAnhydriteMoles = 0;
+phreeqcCouplingOptions.ugfactInitialGoethiteMoles = 0;
+phreeqcCouplingOptions.ugfactInitialPortlanditeMoles = 0;
+phreeqcCouplingOptions.ugfactInitialPyriteMoles = 0;
+phreeqcCouplingOptions.ugfactInitialGypsumMoles = 0;
+phreeqcCouplingOptions.mrstMonodComMaxIterations = opt.phreeqcPicardMaxIterations;
+phreeqcCouplingOptions.mrstMonodComRelaxation = opt.phreeqcPicardRelaxation;
+phreeqcCouplingOptions.mrstMonodComAbsoluteTolerance = ...
+    opt.phreeqcPicardAbsoluteTolerance;
+phreeqcCouplingOptions.mrstMonodComRelativeTolerance = ...
+    opt.phreeqcPicardRelativeTolerance;
+phreeqcCouplingOptions.mrstMonodComPHTolerance = opt.phreeqcPicardPHTolerance;
+phreeqcCouplingOptions.mrstMonodComPkaTolerance = opt.phreeqcPicardPkaTolerance;
+phreeqcCouplingOptions.mrstMonodComReactionAbsoluteTolerance = ...
+    opt.phreeqcPicardReactionAbsoluteTolerance;
+phreeqcCouplingOptions.mrstMonodComReactionRelativeTolerance = ...
+    opt.phreeqcPicardReactionRelativeTolerance;
+if opt.phreeqcInitialization
+    % Seed each cell from the equilibrated PHREEQC phase amounts, not the
+    % pre-equilibration rock inventory.
+    phreeqcCouplingOptions.initialDolomiteMoles = phreeqc.minerals.dolomite;
+    phreeqcCouplingOptions.initialCalciteMoles = phreeqc.minerals.calcite;
+    phreeqcCouplingOptions.initialBruciteMoles = phreeqc.minerals.brucite;
+    phreeqcCouplingOptions.initialQuartzMoles = phreeqc.minerals.quartz;
+end
 
 %% Model assembly
 backend = DiagonalAutoDiffBackend('modifyOperators', true);
@@ -136,6 +352,16 @@ model = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, true, backend
     'chemotaxisEffect', opt.chemotaxisEffect, ...
     'molecularDiffusion', opt.molecularDiffusion, ...
     'molecularDispersion', opt.molecularDispersion, ...
+    'carbonateBuffer', opt.carbonateBuffer, ...
+    'carbonateBufferPH', pH0, ...
+    'carbonateBufferPka1', carbonateBufferPka1, ...
+    'phreeqcTimestepCoupling', opt.phreeqcTimestepCoupling, ...
+    'phreeqcBackend', phreeqcBackend, ...
+    'phreeqcConservativeCarbonTransfer', opt.phreeqcConservativeCarbonTransfer, ...
+    'phreeqcDatabaseFile', opt.phreeqcDatabaseFile, ...
+    'phreeqcComProgId', opt.phreeqcComProgId, ...
+    'phreeqcCouplingOptions', phreeqcCouplingOptions, ...
+    'bacterialDecayOrder', 1 + ~opt.paperBiomassKinetics, ...
     'enableSulfateSource', false, ...
     'liquidPhase', 'O', 'vaporPhase', 'G');
 model.EOSModel = eos;
@@ -143,9 +369,18 @@ model.OutputStateFunctions{end + 1} = 'ComponentPhaseDensity';
 if opt.bacteriamodel
     model.OutputStateFunctions{end + 1} = 'PsiGrowthRate';
     model.OutputStateFunctions{end + 1} = 'BacterialMass';
+    model.OutputStateFunctions{end + 1} = 'CarbonLimitedGrowthRate';
 end
 nBioReactions = biochemFluid.nbioreact;
-nbact0 = opt.nbact0*ones(1, nBioReactions);
+validateattributes(opt.nbact0, {'numeric'}, ...
+    {'real', 'finite', 'positive', 'vector'}, mfilename, 'nbact0');
+if isscalar(opt.nbact0)
+    nbact0 = repmat(opt.nbact0, 1, nBioReactions);
+else
+    assert(numel(opt.nbact0) == nBioReactions, ...
+        'nbact0 must be scalar or contain one value per biochemical reaction.');
+    nbact0 = reshape(opt.nbact0, 1, []);
+end
 if opt.bioClogging && opt.bacteriamodel
     model = setupBioCloggingModel(model, nbact0, [180, 180, 180], [0.5, 0.5, 0.5], true);
 else
@@ -161,10 +396,25 @@ end
 %% H2Storage1D initial fluid state
 p0 = 150*barsa;
 T0 = 273.15 + 60;
-z0 = zeros(1, compFluid.getNumberOfComponents());
-z0(strcmp(compFluid.names, 'H2O')) = 0.90;
-z0(strcmp(compFluid.names, 'C1')) = 0.10;
-
+zCO2 = 0.0025;
+if any(strcmp(phreeqcBackend, {'ugfact-com', 'mrst-monod-com'}))
+    % H2Storage1D starts with no EOS CO2; C(4) is represented solely by
+    % Solution.C4 and must not be duplicated in the volatile inventory.
+    zCO2 = 0;
+elseif opt.phreeqcInitialization
+    [zCO2, xCO2Target] = calibrateInitialCO2(model, p0, T0, nbact0, eos, ...
+        initialCO2Molality, opt.bacteriamodel);
+elseif opt.equilibrateInitialCO2
+    assert(opt.carbonateBuffer && opt.initialHCO3(1) > 0, ...
+        ['equilibrateInitialCO2 requires carbonateBuffer=true and ', ...
+         'a positive initialHCO3.']);
+    [zCO2, xCO2Target] = calibrateInitialCO2(model, p0, T0, nbact0, eos, ...
+        opt.initialHCO3./10.^(pH0 - model.carbonateBufferPka1), opt.bacteriamodel);
+end
+z0 = zeros(model.G.cells.num, compFluid.getNumberOfComponents());
+z0(:,strcmp(compFluid.names, 'H2O')) = 0.90;
+z0(:,strcmp(compFluid.names, 'C1')) = 0.10 - zCO2;
+z0(:,strcmp(compFluid.names, 'CO2')) = zCO2;
 if opt.bacteriamodel
     state0 = initCompositionalStateBacteria(model, p0, T0, [], z0, nbact0, eos);
 else
@@ -176,12 +426,93 @@ if opt.bacteriamodel
     state0.tracerSO4 = repmat(initialSO4*eos.rho_water, ncell, 1);
     state0.tracerHS = zeros(ncell, 1);
     state0.h2sDissolvedLag = zeros(ncell, 1);
+    if opt.carbonateBuffer
+        if opt.phreeqcInitialization
+            initialNonvolatileDIC = phreeqc.aqueous.totalCarbon - initialCO2Molality;
+        else
+            initialNonvolatileDIC = initialHCO3;
+        end
+        state0.tracerHCO3 = repmat(max(initialNonvolatileDIC, 0)*eos.rho_water, ncell, 1);
+    end
 end
-%% H2Storage1D schedule with the retained H2/CO2 injection extension
-dt = repmat(2*day, 125, 1);
-schedule = simpleSchedule(dt);
-schedule.step.control(26:100) = 2;
-schedule.step.control(101:end) = 3;
+% Add extra initial aqueous carbon
+% extraC4 = e-1; % mol/kg water
+% state0.tracerHCO3 = [0.5550
+%     0.5395
+%     0.5286
+%     0.5225
+%     0.5193
+%     0.5176
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701
+%     1.3701]; 
+% state0.tracerHCO3= state0.tracerHCO3 + ...
+%     extraC4*model.EOSModel.rho_water;
+if opt.phreeqcTimestepCoupling
+    if opt.phreeqcInitialization
+        initialCa = phreeqc.aqueous.ca;
+        initialMg = phreeqc.aqueous.mg;
+    else
+        initialCa = phreeqcCouplingOptions.Ca;
+        initialMg = phreeqcCouplingOptions.Mg;
+    end
+    state0.tracerCa = repmat(initialCa*eos.rho_water, ncell, 1);
+    state0.tracerMg = repmat(initialMg*eos.rho_water, ncell, 1);
+    state0.phreeqcHCO3Molality = repmat(initialHCO3, ncell, 1);
+    state0.phreeqcPE = 4*ones(ncell, 1);
+    state0 = initializeH2StoragePhreeqcCouplingState(model, state0);
+end
+%% H2Storage1D benchmark: 50 d injection, 150 d storage, 50 d production.
+dtInj = repmat(2*day, 25, 1);
+dtStor = repmat(2*day, 75, 1);
+dtProd = repmat(2*day, 25, 1);
+
+schedule.step.val = [dtInj; dtStor; dtProd];
+schedule.step.control = [ ...
+    ones(numel(dtInj), 1); ...
+    2*ones(numel(dtStor), 1); ...
+    3*ones(numel(dtProd), 1)];
 
 [~, ~, ~, ~, Z_V] = standaloneFlash(p0, T0, [0, 1, 0, 0, 0, 0], eos);
 Bg = 101325/298.15*Z_V*T0/p0;
@@ -214,9 +545,76 @@ schedule.control(3).W = W3;
 fprintf('H2Storage1D SRB tracer benchmark: pH %.2f, SO4 %.4g mol/kgw, NaCl-equivalent %.3f mol/kgw\n', ...
     pH0, initialSO4, initialNaCl);
 fprintf('Kinetic rate case: %s\n', rateCase);
+if opt.carbonateBuffer
+    fprintf('Carbonate buffer: %.4g mol/kgw HCO3- at pH %.2f\n', ...
+        initialHCO3, pH0);
+end
+if ~any(strcmp(phreeqcBackend, {'ugfact-com', 'mrst-monod-com'})) && ...
+        (opt.equilibrateInitialCO2 || opt.phreeqcInitialization)
+    fprintf(['Initial CO2 calibrated to x_CO2(liquid) %.4g: ', ...
+        'z_CO2 %.4g\n'], xCO2Target, zCO2);
+end
+if opt.phreeqcTimestepCoupling
+    fprintf(['PHREEQC timestep coupling (%s): post-convergence, per-cell ', ...
+        'chemistry split\n'], phreeqcBackend);
+    if strcmp(phreeqcBackend, 'ugfact-com')
+        fprintf(['UGFACT COM kinetics use separate PHREEQC biomass state; ', ...
+            'implicit h2-biochem reaction sources are disabled.\n']);
+    elseif strcmp(phreeqcBackend, 'mrst-monod-com')
+        fprintf(['MRST nbact Monod sources remain the sole reaction owner. ', ...
+            'Run simulateH2StorageMrstMonodComPicard for same-timestep ', ...
+            'equilibrium feedback (max %d Picard iterations).\n'], ...
+            opt.phreeqcPicardMaxIterations);
+    end
+    if opt.phreeqcConservativeCarbonTransfer
+        fprintf('PHREEQC carbon transfer: mineral-carbon changes are mapped to EOS CO2\n');
+    end
+end
 fprintf('Injection: %.1f%% H2 + %.1f%% CO2\n', ...
     100*(1 - opt.injectionCO2), 100*opt.injectionCO2);
 end
+
+function [zCO2, xCO2Target] = calibrateInitialCO2(model, p0, T0, nbact0, eos, mCO2, useBacteria)
+% mCO2 : scalar or vector of target aqueous CO2 molality [mol/kgw].
+% Returns zCO2 (gas mole fraction) and xCO2Target (liquid mole fraction) of same size.
+
+iCO2 = find(strcmp(model.EOSModel.CompositionalMixture.names, 'CO2'), 1);
+xCO2Target = mCO2 ./ (55.508 + mCO2);   % vector if mCO2 is vector
+
+lower = 0;
+upper = 0.10 - 1e-10;
+
+% Pre-allocate output
+zCO2 = zeros(size(xCO2Target));
+
+% Residual function that takes candidate and target (scalar)
+    function res = residual(candidate, target)
+        z = zeros(1, numel(model.EOSModel.CompositionalMixture.names));
+        z(strcmp(model.EOSModel.CompositionalMixture.names, 'H2O')) = 0.90;
+        z(strcmp(model.EOSModel.CompositionalMixture.names, 'C1')) = 0.10 - candidate;
+        z(iCO2) = candidate;
+        if useBacteria
+            state = initCompositionalStateBacteria(model, p0, T0, [], z, nbact0, eos);
+        else
+            state = initCompositionalState(model, p0, T0, [], z, eos);
+        end
+        res = state.x(1, iCO2) - target;   % scalar
+    end
+
+% Bracket check for each target (element-wise)
+fLower = arrayfun(@(t) residual(lower, t), xCO2Target);
+fUpper = arrayfun(@(t) residual(upper, t), xCO2Target);
+assert(all(fLower .* fUpper <= 0), ...
+    'Bracket check failed for at least one target. No valid zCO2 found.');
+
+% Solve for each target – using a loop for clarity and robustness
+for i = 1:numel(xCO2Target)
+    target = xCO2Target(i);
+    % Bind the target into a scalar residual for fzero
+    zCO2(i) = fzero(@(c) residual(c, target), [lower, upper]);
+end
+end
+
 
 function model = setBenchmarkSulfateSource(model, enabled)
 model.enableSulfateSource = enabled;
@@ -231,4 +629,10 @@ facilityRate.enable_sulfate_source = enabled;
 model.FacilityModel.FacilityFlowDiscretization = ...
     model.FacilityModel.FacilityFlowDiscretization.setStateFunction( ...
         'SRBTracerConvRate', facilityRate);
+end
+
+function isAbsolute = isAbsolutePhreeqcPath(path)
+path = char(path);
+isAbsolute = ~isempty(regexp(path, '^[A-Za-z]:[\\/]|^\\\\', 'once')) || ...
+    startsWith(path, filesep);
 end
