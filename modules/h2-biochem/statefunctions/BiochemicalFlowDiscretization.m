@@ -59,7 +59,12 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
                     props = props.setStateFunction('ChemoBactFlux', ChemotaxisBactFlux(model));
                 end
 
-                if model.hasMobileAqueousTracers()
+                if ismethod(model, 'hasMobileAqueousTracers')
+                    hasTracers = model.hasMobileAqueousTracers();
+                else
+                    hasTracers = isprop(model, 'sulfateReduction') && model.sulfateReduction;
+                end
+                if hasTracers
                     if model.sulfateReduction
                     props = props.setStateFunction('SRBTracerConvRate', SRBTracerConvRate(model));
                     end
@@ -134,7 +139,11 @@ classdef BiochemicalFlowDiscretization < FlowDiscretization
             % volatile EOS components via ComponentTotalFluxForBio.
             tracermass  = model.getProp(state, 'AqueousTracerMass');
             tracermass0 = model.getProp(state0, 'AqueousTracerMass');
-            name = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                name = model.getAqueousTracerNames();
+            else
+                name = {'SO4', 'HS'};
+            end
             ntracer = numel(name);
 
             acc = cell(1, ntracer);

@@ -59,9 +59,17 @@ classdef BactConvertionRate < StateFunction
 
             bcr@StateFunction(model, varargin{:});
 
-            % BacterialMass is evaluated on the reservoir model below:
-            % this state function is also registered on the facility model.
-            bcr = bcr.dependsOn('CarbonLimitedGrowthRate', 'state');
+            % This state function is also registered on the facility model.
+            rm = model;
+            if isprop(model, 'ReservoirModel') && ~isempty(model.ReservoirModel)
+                rm = model.ReservoirModel;
+            end
+            if isa(rm, 'BiochemistryPhreeqcModel')
+                growthRateName = 'CarbonLimitedGrowthRate';
+            else
+                growthRateName = 'PsiGrowthRate';
+            end
+            bcr = bcr.dependsOn(growthRateName, 'state');
             if isprop(model, 'phreeqcTimestepCoupling') && model.phreeqcTimestepCoupling
                 bcr = bcr.dependsOn('phreeqcPH', 'state');
             end
@@ -97,9 +105,9 @@ classdef BactConvertionRate < StateFunction
             if ~(rm.bacteriamodel && rm.liquidPhase)
                 return;
             end
-            if ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
-                    rm.isUgfactComPhreeqcBackend()
-                % The UGFACT COM split owns MET/ACE/SRB chemistry after
+            if ismethod(rm, 'isSequentialCompositionalPhreeqcBackend') && ...
+                    rm.isSequentialCompositionalPhreeqcBackend()
+                % The compositional PHREEQC COM split owns MET/ACE/SRB chemistry after
                 % convergence. Keep the MRST transport equations, but do
                 % not apply their microbial component sources as well.
                 return;
@@ -123,7 +131,12 @@ classdef BactConvertionRate < StateFunction
 
             % Get primary state variables directly (avoids redundant Density calculations)
             bmass = rm.PVTPropertyFunctions.get(rm, state, 'BacterialMass');
-            psigrowth = model.getProps(state, 'CarbonLimitedGrowthRate');
+            if isa(rm, 'BiochemistryPhreeqcModel')
+                growthRateName = 'CarbonLimitedGrowthRate';
+            else
+                growthRateName = 'PsiGrowthRate';
+            end
+            psigrowth = model.getProps(state, growthRateName);
 
             % Get model parameters
             Y_H2 = bcrm.Y_H2;                      % Reaction yield scales

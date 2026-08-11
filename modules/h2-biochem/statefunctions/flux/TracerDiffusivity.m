@@ -108,7 +108,11 @@ classdef TracerDiffusivity < StateFunction
             end
 
             % --- Molecular diffusion (Millington-Quirk tortuosity) ---
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             D_eff = cell(1, numel(tracerNames));
             if model.molecularDiffusion
                 phiS = phi .* sL;

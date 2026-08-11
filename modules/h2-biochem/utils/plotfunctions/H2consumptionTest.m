@@ -1,6 +1,6 @@
 for aa =1:1
-    states = statesMonod; %scenarios{aa}.states;
-    ws = wsMonod;%scenarios{aa}.ws;
+    % states = statesMonod; %scenarios{aa}.states;
+    % ws = wsMonod;%scenarios{aa}.ws;
     %model = scenarios{aa}.model;
     %schedule = scenarios{aa}.schedule;
 
@@ -66,6 +66,10 @@ for aa =1:1
             totalCum(:, reaction) = sum(H2cum{reaction}, 1)';
             finalCum(:, reaction) = H2cum{reaction}(:, end);
         end
+        assert(all(isfinite(finalCum(:)) & finalCum(:) >= 0), ...
+            'Computed H2 consumption contains invalid values.');
+        reactionTotals = sum(finalCum, 1);
+        totalConsumedH2 = sum(reactionTotals);
 
         timeDays = cumsum(schedule.step.val)./day;
         reactionNames = cellstr(model.biochemFluid.metabolicReaction);
@@ -94,8 +98,13 @@ for aa =1:1
         title('Spatial Distribution of H2 Consumption');
         grid on;
 
+        for reaction = 1:nReactions
+            fprintf('%s consumed H2: %.6f mol\n', ...
+                reactionNames{reaction}, reactionTotals(reaction));
+        end
+        fprintf('Total consumed H2: %.6f mol\n', totalConsumedH2);
         fprintf('Consumed injected H2: %.3f %%\n', ...
-            100*sum(finalCum, 'all')./totalInjectedH2);
+            100*totalConsumedH2./totalInjectedH2);
         % ---- Spatial distribution as stacked bar chart ----
         xCoords = model.G.cells.centroids(:, 1);
         xNorm = (xCoords - min(xCoords))./(max(xCoords) - min(xCoords));

@@ -30,7 +30,11 @@ classdef DiffusiveTracerFlux < StateFunction
             df = merge_options(df, varargin{:});
 
             df = df.dependsOn('TracerTransmissibility');
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             df = df.dependsOn(cellfun(@lower, tracerNames, 'UniformOutput', false), 'state');
 
             df.label = 'J_{tracer}^{diff}';
@@ -40,7 +44,11 @@ classdef DiffusiveTracerFlux < StateFunction
             op = model.operators;
             T = prop.getEvaluatedDependencies(state, 'TracerTransmissibility');
 
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             J = cell(1, numel(tracerNames));
             for i = 1:numel(tracerNames)
                 c = model.getProp(state, lower(tracerNames{i}));

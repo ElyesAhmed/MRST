@@ -20,7 +20,11 @@ classdef AqueousTracerMass < StateFunction
     methods
         function tm = AqueousTracerMass(model, varargin)
             tm@StateFunction(model, varargin{:});
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             tm = tm.dependsOn(cellfun(@lower, tracerNames, 'UniformOutput', false), 'state');
             tm = tm.dependsOn('s', 'state');
             tm = tm.dependsOn('PoreVolume', 'PVTPropertyFunctions');
@@ -37,7 +41,11 @@ classdef AqueousTracerMass < StateFunction
                 sL = max(s(:, L_ix), 1.0e-8);
             end
 
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             m = cell(1, numel(tracerNames));
             for i = 1:numel(tracerNames)
                 concentration = model.getProp(state, lower(tracerNames{i}));

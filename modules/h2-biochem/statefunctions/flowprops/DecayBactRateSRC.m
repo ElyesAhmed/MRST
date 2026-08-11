@@ -96,7 +96,11 @@ classdef DecayBactRateSRC < StateFunction
                     nbacti=nbact(:,i);
                 end
                 bbact = bcrm.bbact(i);
-                if rm.bacterialDecayOrder == 1
+                decayOrder = 2;
+                if isprop(rm, 'bacterialDecayOrder')
+                    decayOrder = rm.bacterialDecayOrder;
+                end
+                if decayOrder == 1
                     % Paper kinetics: biomass loss is b*M.
                     Psidecay{i} = bbact + 0.*nbacti;
                 else

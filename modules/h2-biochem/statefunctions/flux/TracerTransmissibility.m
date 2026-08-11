@@ -42,7 +42,11 @@ classdef TracerTransmissibility < StateFunction
             op = model.operators;
             nInternal = numel(op.internalConn);
 
-            tracerNames = model.getAqueousTracerNames();
+            if ismethod(model, 'getAqueousTracerNames')
+                tracerNames = model.getAqueousTracerNames();
+            else
+                tracerNames = {'SO4', 'HS'};
+            end
             T_face = cell(1, numel(tracerNames));
             for i = 1:numel(tracerNames)
                 D = D_eff_cell{i};

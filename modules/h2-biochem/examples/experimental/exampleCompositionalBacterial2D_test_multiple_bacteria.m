@@ -19,7 +19,7 @@
 %
 % References:
 %   - Original 2D case: Ahmed et al., 2024
-%   - Three‑reaction model: Shojaee et al., 2025 (UGFACT)
+%   - Three‑reaction model: Shojaee et al., 2025 (compositional PHREEQC)
 % =========================================================================
 
 clearvars;

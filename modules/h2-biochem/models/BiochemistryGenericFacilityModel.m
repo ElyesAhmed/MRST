@@ -81,8 +81,8 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
             nbioreact=bcrm.nbioreact;
             src_growthdecay = cell(1,nbioreact);
             [src_growthdecay{:}] = deal(0);
-            if ~(ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
-                    rm.isUgfactComPhreeqcBackend())
+            if ~(ismethod(rm, 'isSequentialCompositionalPhreeqcBackend') && ...
+                    rm.isSequentialCompositionalPhreeqcBackend())
                 reg = 1.0e-10;
                 flowState = fd.buildFlowState(model, state, state0, dt);
                 psigrowth = model.getProps(flowState, 'CarbonLimitedGrowthRate');
@@ -192,8 +192,8 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
             ntracer = numel(tracerNames);
             src_reaction = cell(1, ntracer);
             [src_reaction{:}] = deal(0);
-            if rm.sulfateReduction && ~(ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
-                    rm.isUgfactComPhreeqcBackend())
+            if rm.sulfateReduction && ~(ismethod(rm, 'isSequentialCompositionalPhreeqcBackend') && ...
+                    rm.isSequentialCompositionalPhreeqcBackend())
                 flowState = fd.buildFlowState(model, state, state0, dt);
                 srbSource = model.getProps(flowState, 'SRBTracerConvRate');
                 src_reaction{strcmp(tracerNames, 'SO4')} = srbSource{1};

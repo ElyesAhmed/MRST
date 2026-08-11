@@ -15,13 +15,14 @@ This module extends MRST's capabilities by integrating a bio-chemistry model wit
 
 ### Optional PHREEQC backends
 
-`setupH2StorageExampleWithSRB_benchmark` defaults to
-`phreeqcBackend='standard-pitzer'`; its existing PhreeqcMatlab workflow is
-unchanged. Set `phreeqcBackend='ugfact-com'` with
-`phreeqcTimestepCoupling=true` to run the optional post-convergence UGFACT
-kinetic split. It requires Windows, a registered `IPhreeqcCOM.Object` (or
+`setupH2StorageExampleWithSRB_benchmark` supports exactly two PHREEQC
+backends. Both require Windows, a registered `IPhreeqcCOM.Object` (or
 configured `phreeqcComProgId`), and an explicit absolute
 `phreeqcDatabaseFile` path to `PHREEQC_Modified.DAT`.
+
+Set `phreeqcBackend='sequential-compositional-phreeqc'` with
+`phreeqcTimestepCoupling=true` to run the post-convergence compositional
+kinetics/chemistry split.
 
 The COM split carries separate PHREEQC MET/ACE/SRB biomass
 (`N0=1e9`, `Nmax=1e13` cells/kg water) and disables MRST's implicit microbial
@@ -34,12 +35,34 @@ Since its reaction source is also zero here, MRST does not assemble `nbact`'s
 mass-balance equation at all for this backend (it would be a pure no-op every
 step); `nbact` is still carried as a state field, and
 `PsiGrowthRate`/`CarbonLimitedGrowthRate`/`BacterialMass` remain available as
-diagnostic-only outputs. It maps the prescribed UGFACT selected-output schema
+diagnostic-only outputs. It maps the prescribed selected-output schema
 back to tracers, minerals, and EOS inventories before reflashing. This
 sequential coupling is not claimed to exactly reproduce any paper or external
 benchmark.
 
-`phreeqcBackend='mrst-monod-com'` is a separate opt-in Windows COM backend.
+Both backends reject a PHREEQC result before updating the state unless H, C, S,
+Ca, Mg, and Fe are conserved in every cell. The returned state records the
+`nc`-by-6 diagnostics `phreeqcElementBalanceInput`,
+`phreeqcElementBalanceOutput`, `phreeqcElementBalanceAbsoluteResidual`,
+`phreeqcElementBalanceNormalizedResidual`, and
+`phreeqcElementBalancePass`; column names are in
+`phreeqcElementBalanceElements`. Configure scalar or six-element tolerances
+with `phreeqcElementBalanceAbsoluteTolerance` (default `1e-7` mol) and
+`phreeqcElementBalanceRelativeTolerance` (default `1e-8`) in
+`phreeqcCouplingOptions`.
+
+The audit covers aqueous analytical totals (including the separate acetate
+element), EOS H2/CO2/CH4/H2S, and all configured equilibrium minerals. Hydrogen
+uses PHREEQC's system inventory with the fixed initial 1 kg solvent-water
+baseline removed, avoiding subtraction of cell-scale solvent hydrogen while
+retaining reaction- and hydrate-water changes. The compositional backend's
+kinetic biomass is outside the reactive-element inventory because its PHREEQC
+definition has `-formula H 0` and defines no C, S, Ca, Mg, or Fe storage;
+MET/ACE/SRB kinetic amounts are reaction extents rather than stored products.
+MRST `nbact` is likewise outside the equilibrium-only boundary.
+
+`phreeqcBackend='sequential-h2biochem-phreeqc'` retains MRST's biochemical
+sources and adds sequential PHREEQC equilibrium feedback.
 It also requires a registered IPhreeqcCOM server and an absolute
 `PHREEQC_Modified.DAT` path, but contains **no** PHREEQC `RATES` or
 `KINETICS`. MRST's existing `state.nbact` Monod model remains the sole
@@ -48,15 +71,14 @@ sources remain active.
 
 ```matlab
 [~, model, schedule, state0] = setupH2StorageExampleWithSRB_benchmark( ...
-    'phreeqcBackend', 'mrst-monod-com', ...
+    'phreeqcBackend', 'sequential-h2biochem-phreeqc', ...
     'phreeqcTimestepCoupling', true, ...
     'phreeqcDatabaseFile', 'C:\PHREEQC\database\PHREEQC_Modified.DAT');
-[wellSols, states, report] = simulateH2StorageMrstMonodComPicard( ...
+[wellSols, states, report] = simulateSequentialH2BiochemPhreeqc( ...
     state0, model, schedule);
 ```
 
-Run this backend with
-`simulateH2StorageMrstMonodComPicard(state0, model, schedule)`, rather than
+Run this backend with `simulateSequentialH2BiochemPhreeqc`, rather than
 directly with `simulateScheduleAD`. For every nominal schedule timestep, the
 wrapper repeats the MRST solve from the fixed timestep-start state, then
 equilibrates the already-reacted full component, tracer, gas, and mineral

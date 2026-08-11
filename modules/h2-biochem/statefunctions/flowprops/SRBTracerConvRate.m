@@ -70,10 +70,10 @@ classdef SRBTracerConvRate < StateFunction
             if isempty(rm) || ~isprop(rm, 'sulfateReduction') || ~rm.sulfateReduction
                 return;
             end
-            if ismethod(rm, 'isUgfactComPhreeqcBackend') && ...
-                    rm.isUgfactComPhreeqcBackend()
+            if ismethod(rm, 'isSequentialCompositionalPhreeqcBackend') && ...
+                    rm.isSequentialCompositionalPhreeqcBackend()
                 % Kinetic sulfate/sulfide changes are supplied by the
-                % post-convergence UGFACT PHREEQC split in this mode.
+                % post-convergence compositional PHREEQC split in this mode.
                 return;
             end
 

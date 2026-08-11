@@ -16,13 +16,27 @@ H2_cum_per_cell = zeros(nCells, nSteps);
 for t = 1:nSteps
     state = states{t};
 
-    if model.isMrstMonodComPhreeqcBackend() && ...
-            isfield(state, 'phreeqcMrstMonodComCumulativeH2ConsumptionMoles')
-        cumulative = state.phreeqcMrstMonodComCumulativeH2ConsumptionMoles(:, idxReaction);
+    if isa(model, 'BiochemistryPhreeqcModel') && ...
+            model.isSequentialCompositionalPhreeqcBackend() && ...
+            isfield(state, 'sequentialCompositionalPhreeqcH2ConsumptionByReactionMoles')
+        increment = state.sequentialCompositionalPhreeqcH2ConsumptionByReactionMoles(:, idxReaction);
+        H2_rate_per_cell(:, t) = increment./schedule.step.val(t);
+        if t == 1
+            H2_cum_per_cell(:, t) = increment;
+        else
+            H2_cum_per_cell(:, t) = H2_cum_per_cell(:, t - 1) + increment;
+        end
+        continue;
+    end
+
+    if isa(model, 'BiochemistryPhreeqcModel') && ...
+            model.isSequentialH2BiochemPhreeqcBackend() && ...
+            isfield(state, 'sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles')
+        cumulative = state.sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles(:, idxReaction);
         if t == 1
             increment = cumulative;
         else
-            previous = states{t - 1}.phreeqcMrstMonodComCumulativeH2ConsumptionMoles(:, idxReaction);
+            previous = states{t - 1}.sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles(:, idxReaction);
             increment = cumulative - previous;
         end
         H2_rate_per_cell(:, t) = increment./schedule.step.val(t);

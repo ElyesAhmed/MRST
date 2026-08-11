@@ -12,7 +12,7 @@ classdef GrowthBactRateSRC < StateFunction
     %   liquid-phase EOS composition (x). For sulfate reducers (SRB),
     %   the substrate SO4 is taken from the aqueous tracer `tracerSO4`
     %   and converted to mole fraction using the liquid molar density.
-    %   During an active mrst-monod-com Picard solve, the PHREEQC pH,
+    %   During an active sequential-h2biochem-phreeqc Picard solve, the PHREEQC pH,
     %   DIC/CO2, and sulfate snapshot replaces only those kinetic
     %   substrate terms; all conserved-state balances remain unchanged.
 
@@ -61,8 +61,8 @@ classdef GrowthBactRateSRC < StateFunction
             namecp = rm.getComponentNames();
             nbioreact = bcrm.nbioreact;
             feedback = [];
-            if ismethod(rm, 'getMrstMonodComChemistryFeedback')
-                feedback = rm.getMrstMonodComChemistryFeedback();
+            if ismethod(rm, 'getSequentialH2BiochemPhreeqcChemistryFeedback')
+                feedback = rm.getSequentialH2BiochemPhreeqcChemistryFeedback();
             end
 
             % Initialize output
@@ -124,7 +124,8 @@ classdef GrowthBactRateSRC < StateFunction
                     end
                     alphasub = bcrm.alphasub(i);
 
-                    if rm.carbonateBuffer && strcmpi(bcrm.rsub(i), 'CO2') && ...
+                    if isprop(rm, 'carbonateBuffer') && rm.carbonateBuffer && ...
+                            strcmpi(bcrm.rsub(i), 'CO2') && ...
                             (~isempty(feedback) || isfield(state, 'tracerHCO3'))
                         if isfield(state, 'Z_L')
                             Z_L = state.Z_L;
