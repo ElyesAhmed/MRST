@@ -38,6 +38,14 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
         % automatic post-step hook disabled prevents an accidental,
         % lagged one-pass chemistry update for this backend.
         sequentialH2BiochemPhreeqcPicardActive = false;
+        % Set only internally by SequentialBiochemistryPhreeqcModel on the
+        % flow-stage/reaction-stage sub-models it builds. Like
+        % sequentialH2BiochemPhreeqcPicardActive, this bypasses the
+        % "direct simulateScheduleAD is unsafe" guard for the
+        % sequential-h2biochem-phreeqc backend, but for the general
+        % coarse-flow/local-reaction split rather than the outer Picard
+        % scheme.
+        sequentialSplitActive = false;
         bacterialDecayOrder = 2;          % 2: legacy quadratic, 1: first-order
     end
 
@@ -75,6 +83,13 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
             assert(~model.sequentialH2BiochemPhreeqcPicardActive, ...
                 ['sequentialH2BiochemPhreeqcPicardActive is reserved for ', ...
                  'simulateSequentialH2BiochemPhreeqc and cannot be ', ...
+                 'configured on construction.']);
+            model.sequentialSplitActive = normalizeTransportFlag( ...
+                model.sequentialSplitActive, 'sequentialSplitActive');
+            assert(~model.sequentialSplitActive, ...
+                ['sequentialSplitActive is reserved for the flow-stage ', ...
+                 'and reaction-stage sub-models built internally by ', ...
+                 'SequentialBiochemistryPhreeqcModel and cannot be ', ...
                  'configured on construction.']);
             assert(ischar(model.phreeqcComProgId) || ...
                 (isstring(model.phreeqcComProgId) && isscalar(model.phreeqcComProgId)), ...
@@ -345,7 +360,7 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
         function [eqs, names, types, state] = getModelEquations(model, state0, state, dt, drivingForces, varargin)
             % Discretize
             [eqs, flux, names, types] = model.FlowDiscretization.componentConservationEquations(model, state, state0, dt);
-            if model.bacteriamodel && model.carbonateBuffer
+            if model.bacteriamodel && model.carbonateBuffer && model.reactionsEnabled
                 % Use the pre-step aqueous inventory to bound this step's
                 % growth. Using the evolving Newton state here would make
                 % the rate cap consume its own final-state availability.
@@ -367,7 +382,8 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
             eqs = model.insertSources(eqs, src);
             % Assemble equations
 
-            if model.bacteriamodel
+            hco3Sink = 0;
+            if model.bacteriamodel && model.reactionsEnabled
                 cnames = model.EOSModel.getComponentNames();
                 ncomp = numel(cnames);
                 src_rate = model.FacilityModel.getProps(state, 'BactConvRate');
@@ -379,7 +395,6 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
                     rhoL = rho(:, L_ix);
                 end
 
-                hco3Sink = 0;
                 if model.carbonateBuffer
                     idxCO2 = find(strcmpi(cnames, 'CO2'), 1);
                     assert(~isempty(idxCO2), ...
@@ -413,8 +428,15 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
                 end
             end
 
+            % localReactionMode (used by the reaction stage of the
+            % coarse-flow/local-reaction split) skips spatial flux
+            % divergence entirely, leaving pure per-cell accumulation
+            % equations coupled only through the (still assembled)
+            % reaction source terms above/below.
             for i = 1:numel(eqs)
-                eqs{i} = model.operators.AccDiv(eqs{i}, flux{i});
+                if ~model.localReactionMode
+                    eqs{i} = model.operators.AccDiv(eqs{i}, flux{i});
+                end
             end
             if model.bacteriamodel
                 fd = model.FlowDiscretization;
@@ -433,12 +455,16 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
                     % Bacterial mass balance: d(M)/dt + div(flux) = source
                     % where M = pv * S_l * nbact [kg]
                     [beqs, bflux, bnames, btypes] = model.FlowDiscretization.bacteriaConservationEquation(model, state, state0, dt);
-                    src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
+                    if model.reactionsEnabled
+                        src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
+                    end
 
                     % Assemble accumulation and flux divergence
                     nbioreact=model.biochemFluid.nbioreact;
                     for i=1:nbioreact
-                        if model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
+                        if model.localReactionMode
+                            % No spatial coupling in local-reaction mode.
+                        elseif model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
                             beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
                             % Dirichlet boundary conditions for bacterial diffusion
                             beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
@@ -453,7 +479,9 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
                              %beqs{1} = model.operators.AccDiv(beqs{1},0);
                         end
 
-                        beqs{i} = beqs{i} - src_growthdecay{i};
+                        if model.reactionsEnabled
+                            beqs{i} = beqs{i} - src_growthdecay{i};
+                        end
                     end
                 end
 
@@ -463,14 +491,20 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
                     % existing biological carbon sink, while Ca/Mg have no
                     % MRST reaction source and are updated by PHREEQC.
                     [tacc, tflux, tnames, ttypes] = model.FlowDiscretization.tracerConservationEquation(model, state, state0, dt);
-                    src_tracer = model.FacilityModel.getAqueousTracerSources(fd, state, state0, dt);
-                    hco3Index = find(strcmp(tnames, 'HCO3'), 1);
-                    if ~isempty(hco3Index)
-                        src_tracer{hco3Index} = src_tracer{hco3Index} - hco3Sink;
+                    if model.reactionsEnabled
+                        src_tracer = model.FacilityModel.getAqueousTracerSources(fd, state, state0, dt);
+                        hco3Index = find(strcmp(tnames, 'HCO3'), 1);
+                        if ~isempty(hco3Index)
+                            src_tracer{hco3Index} = src_tracer{hco3Index} - hco3Sink;
+                        end
                     end
                     for i = 1:numel(tacc)
-                        tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
-                        tacc{i} = tacc{i} - src_tracer{i};
+                        if ~model.localReactionMode
+                            tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
+                        end
+                        if model.reactionsEnabled
+                            tacc{i} = tacc{i} - src_tracer{i};
+                        end
                     end
                     beqs  = [beqs, tacc];
                     bnames = [bnames, tnames];
@@ -871,13 +905,29 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
             if model.bacteriamodel && ~model.isSequentialCompositionalPhreeqcBackend()
-                % Preserve the converged reaction source before an optional
-                % PHREEQC split step changes the chemical state.
-                state = storeH2ConsumptionRate(model, state);
-                if model.isSequentialH2BiochemPhreeqcBackend()
-                    state = accumulateSequentialH2BiochemPhreeqcH2Consumption( ...
-                        state0, state, dt, model.G.cells.num, ...
+                if model.reactionsEnabled
+                    % Preserve the converged reaction source before an optional
+                    % PHREEQC split step changes the chemical state.
+                    state.h2ConsumptionRate = ...
+                        model.computeConvergedH2ConsumptionRate(state);
+                    if model.isSequentialH2BiochemPhreeqcBackend()
+                        state = accumulateSequentialH2BiochemPhreeqcH2Consumption( ...
+                            state0, state, dt, model.G.cells.num, ...
+                            model.biochemFluid.nbioreact);
+                    end
+                else
+                    % Reactions are disabled for this stage (e.g. the flow
+                    % stage of a coarse-flow/local-reaction split, see
+                    % SequentialBiochemistryPhreeqcModel): no reaction
+                    % extent occurred here, so the H2 accounting is
+                    % carried forward unchanged rather than recomputed or
+                    % accumulated from an unused hypothetical rate.
+                    state.h2ConsumptionRate = zeros(model.G.cells.num, ...
                         model.biochemFluid.nbioreact);
+                    if isfield(state0, 'sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles')
+                        state.sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles = ...
+                            value(state0.sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles);
+                    end
                 end
             end
             if model.phreeqcTimestepCoupling
@@ -890,12 +940,15 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                         state = runSequentialCompositionalPhreeqcCoupling( ...
                             model, state, dt);
                     case 'sequential-h2biochem-phreeqc'
-                        if ~model.sequentialH2BiochemPhreeqcPicardActive
+                        if ~model.sequentialH2BiochemPhreeqcPicardActive && ...
+                                ~model.sequentialSplitActive
                             error('BiochemistryPhreeqcModel:SequentialH2BiochemPhreeqcRequiresPicardDriver', ...
                                 ['phreeqcBackend=''sequential-h2biochem-phreeqc'' must be run with ', ...
-                                 'simulateSequentialH2BiochemPhreeqc. Direct ', ...
-                                 'simulateScheduleAD would apply a lagged chemistry ', ...
-                                 'split and is intentionally rejected.']);
+                                 'simulateSequentialH2BiochemPhreeqc, or with a ', ...
+                                 'SequentialBiochemistryPhreeqcModel-driven local ', ...
+                                 'reaction stage. Direct simulateScheduleAD would ', ...
+                                 'apply a lagged chemistry split and is intentionally ', ...
+                                 'rejected.']);
                         end
                     otherwise
                         error('BiochemistryPhreeqcModel:InvalidPhreeqcBackend', ...
@@ -1055,12 +1108,13 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
         end
 
         function model = setSequentialH2BiochemPhreeqcChemistryFeedback(model, feedback)
-            % Store one immutable, numerical chemistry snapshot for the
-            % next MRST candidate solve in the outer Picard iteration.
+            % Store one immutable numerical chemistry snapshot for the
+            % next Picard candidate or split reaction stage.
             assert(model.isSequentialH2BiochemPhreeqcBackend() && ...
-                model.sequentialH2BiochemPhreeqcPicardActive, ...
+                (model.sequentialH2BiochemPhreeqcPicardActive || ...
+                 model.sequentialSplitActive), ...
                 ['h2-biochem chemistry feedback is reserved for the active ', ...
-                 'sequential-h2biochem-phreeqc Picard driver.']);
+                 'sequential-h2biochem-phreeqc coupling drivers.']);
             model.sequentialH2BiochemPhreeqcChemistryFeedback = ...
                 normalizeSequentialH2BiochemPhreeqcChemistryFeedback(feedback, model.G.cells.num);
         end
@@ -1070,13 +1124,14 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
         end
 
         function feedback = getSequentialH2BiochemPhreeqcChemistryFeedback(model)
-            % Return the outer iterate's fixed numerical chemistry only.
+            % Return the active coupling stage's fixed numerical chemistry.
             feedback = [];
             if model.isSequentialH2BiochemPhreeqcBackend() && ...
-                    model.sequentialH2BiochemPhreeqcPicardActive
+                    (model.sequentialH2BiochemPhreeqcPicardActive || ...
+                     model.sequentialSplitActive)
                 feedback = model.sequentialH2BiochemPhreeqcChemistryFeedback;
-                assert(~isempty(feedback), ...
-                    ['The active sequential-h2biochem-phreeqc Picard solve is missing its ', ...
+                assert(~model.reactionsEnabled || ~isempty(feedback), ...
+                    ['The active sequential-h2biochem-phreeqc solve is missing its ', ...
                      'immutable PHREEQC chemistry feedback snapshot.']);
             end
         end
@@ -1150,7 +1205,8 @@ subclassOptions = { ...
     'phreeqcTimestepCoupling', 'phreeqcBackend', ...
     'phreeqcDatabaseFile', ...
     'phreeqcComProgId', 'phreeqcCouplingOptions', ...
-    'sequentialH2BiochemPhreeqcPicardActive', 'bacterialDecayOrder'};
+    'sequentialH2BiochemPhreeqcPicardActive', 'sequentialSplitActive', ...
+    'bacterialDecayOrder'};
 assert(mod(numel(options), 2) == 0, ...
     'BiochemistryPhreeqcModel options must be property/value pairs.');
 baseOptions = {};
@@ -1256,37 +1312,6 @@ rhoMolarL = model.EOSModel.PropertyModel.computeMolarDensity( ...
 poreVolume = model.PVTPropertyFunctions.get(model, state, 'PoreVolume');
 hco3 = max(model.getProp(state, 'hco3'), 0);
 carbonMoles = poreVolume.*sL.*(rhoMolarL.*xCO2 + hco3);
-end
-
-function state = storeH2ConsumptionRate(model, state)
-% Store the converged H2 molar sink for post-processing.
-bcrm = model.biochemFluid;
-nreact = bcrm.nbioreact;
-liquid = model.getLiquidIndex();
-psigrowth = model.FlowPropertyFunctions.get(model, state, 'CarbonLimitedGrowthRate');
-bmass = model.PVTPropertyFunctions.get(model, state, 'BacterialMass');
-rho = model.PVTPropertyFunctions.get(model, state, 'Density');
-if iscell(rho)
-    rhoL = rho{liquid};
-else
-    rhoL = rho(:, liquid);
-end
-
-rate = zeros(model.G.cells.num, nreact);
-for i = 1:nreact
-    if iscell(psigrowth)
-        growth = psigrowth{i};
-    else
-        growth = psigrowth(:, i);
-    end
-    if iscell(bmass)
-        mass = bmass{i};
-    else
-        mass = bmass(:, i);
-    end
-    rate(:, i) = value(bcrm.nbactMax(i).*growth.*mass./(bcrm.Y_H2(i).*rhoL));
-end
-state.h2ConsumptionRate = rate;
 end
 
 function state = accumulateSequentialH2BiochemPhreeqcH2Consumption(state0, state, dt, nc, nreact)

@@ -47,6 +47,13 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         molecularDispersion = false;
         bactDiffusion = false;            % Microbial diffusion
         chemotaxisEffect = false;         % chemotaxis 
+
+        % Coarse-flow/local-reaction sequential split support (see
+        % SequentialBiochemistryPhreeqcModel). Both default to standard,
+        % unsplit behaviour and are only toggled on internally built
+        % single-purpose stage models.
+        reactionsEnabled = true;          % false: no biological source terms assembled (flow stage)
+        localReactionMode = false;        % true: no spatial flux/diffusion assembled (reaction stage)
     end
 
     methods
@@ -64,6 +71,10 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 model.bactDiffusion, 'bactDiffusion');
             model.chemotaxisEffect = normalizeTransportFlag( ...
                 model.chemotaxisEffect, 'chemotaxisEffect');
+            model.reactionsEnabled = normalizeTransportFlag( ...
+                model.reactionsEnabled, 'reactionsEnabled');
+            model.localReactionMode = normalizeTransportFlag( ...
+                model.localReactionMode, 'localReactionMode');
 
             % Set up operators
             model = model.setupOperators();
@@ -284,7 +295,7 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             eqs = model.insertSources(eqs, src);
             % Assemble equations
 
-            if model.bacteriamodel
+            if model.bacteriamodel && model.reactionsEnabled
                 cnames = model.EOSModel.getComponentNames();
                 ncomp = numel(cnames);
                 src_rate = model.FacilityModel.getProps(state, 'BactConvRate');
@@ -303,20 +314,31 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                 end
             end
 
+            % localReactionMode (used by the reaction stage of the
+            % coarse-flow/local-reaction split) skips spatial flux
+            % divergence entirely, leaving pure per-cell accumulation
+            % equations coupled only through the (still assembled)
+            % reaction source terms above/below.
             for i = 1:numel(eqs)
-                eqs{i} = model.operators.AccDiv(eqs{i}, flux{i});
+                if ~model.localReactionMode
+                    eqs{i} = model.operators.AccDiv(eqs{i}, flux{i});
+                end
             end
             if model.bacteriamodel
                 % Bacterial mass balance: d(M)/dt + div(flux) = source
                 % where M = pv * S_l * nbact [kg]
                 [beqs, bflux, bnames, btypes] = model.FlowDiscretization.bacteriaConservationEquation(model, state, state0, dt);
                 fd = model.FlowDiscretization;
-                src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
+                if model.reactionsEnabled
+                    src_growthdecay = model.FacilityModel.getBacteriaSources(fd, state, state0, dt);
+                end
 
                 % Assemble accumulation and flux divergence
                 nbioreact=model.biochemFluid.nbioreact;
                 for i=1:nbioreact
-                    if model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
+                    if model.localReactionMode
+                        % No spatial coupling in local-reaction mode.
+                    elseif model.bactDiffusion && ~model.chemotaxisEffect && ~isempty(bflux{i})
                         beqs{i} = model.operators.AccDiv(beqs{i}, bflux{i});
                         % Dirichlet boundary conditions for bacterial diffusion
                         beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
@@ -331,7 +353,9 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                          %beqs{1} = model.operators.AccDiv(beqs{1},0);
                     end
 
-                    beqs{i} = beqs{i} - src_growthdecay{i};
+                    if model.reactionsEnabled
+                        beqs{i} = beqs{i} - src_growthdecay{i};
+                    end
                 end
 
                 if model.sulfateReduction
@@ -340,10 +364,16 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                     % EOS/flash coupling (see SoreideWhitsonEos and
                     % SRBTracerConvRate).
                     [tacc, tflux, tnames, ttypes] = model.FlowDiscretization.tracerConservationEquation(model, state, state0, dt);
-                    src_tracer = model.FacilityModel.getSRBTracerSources(fd, state, state0, dt);
+                    if model.reactionsEnabled
+                        src_tracer = model.FacilityModel.getSRBTracerSources(fd, state, state0, dt);
+                    end
                     for i = 1:2
-                        tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
-                        tacc{i} = tacc{i} - src_tracer{i};
+                        if ~model.localReactionMode
+                            tacc{i} = model.operators.AccDiv(tacc{i}, tflux{i});
+                        end
+                        if model.reactionsEnabled
+                            tacc{i} = tacc{i} - src_tracer{i};
+                        end
                     end
                     beqs  = [beqs, tacc];
                     bnames = [bnames, tnames];
@@ -724,6 +754,31 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
+            if model.bacteriamodel
+                if isfield(state0, 'cumulativeH2ConsumptionMoles')
+                    cumulative = value( ...
+                        state0.cumulativeH2ConsumptionMoles);
+                else
+                    cumulative = zeros(model.G.cells.num, ...
+                        model.biochemFluid.nbioreact);
+                end
+                if model.reactionsEnabled
+                    state.h2ConsumptionRate = ...
+                        model.computeConvergedH2ConsumptionRate(state);
+                    state.cumulativeH2ConsumptionMoles = cumulative + ...
+                        max(value(state.h2ConsumptionRate), 0).*dt;
+                else
+                    % Reactions are disabled for this stage (e.g. the flow
+                    % stage of a coarse-flow/local-reaction split, see
+                    % SequentialBiochemistryPhreeqcModel): no reaction
+                    % extent occurred here, so cumulative H2 accounting
+                    % must be carried forward unchanged rather than
+                    % recomputed from an unused hypothetical growth rate.
+                    state.h2ConsumptionRate = zeros(model.G.cells.num, ...
+                        model.biochemFluid.nbioreact);
+                    state.cumulativeH2ConsumptionMoles = cumulative;
+                end
+            end
             if model.sulfateReduction
                 % Cache the converged dissolved-H2S concentration
                 % [mol/m3 liquid] for use as the (lagged) total-sulfide
@@ -745,6 +800,44 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
                         value(state.pressure), value(state.x), value(state.Z_L), state.T, true);
                     state.h2sDissolvedLag = value(rhoL_molar) .* xH2S;
                 end
+            end
+        end
+
+        function rate = computeConvergedH2ConsumptionRate(model, state)
+            % Compute the converged reaction-specific H2 molar sink.
+            bcrm = model.biochemFluid;
+            nreact = bcrm.nbioreact;
+            liquid = model.getLiquidIndex();
+            if isa(model, 'BiochemistryPhreeqcModel')
+                growthRateName = 'CarbonLimitedGrowthRate';
+            else
+                growthRateName = 'PsiGrowthRate';
+            end
+            psigrowth = model.FlowPropertyFunctions.get( ...
+                model, state, growthRateName);
+            bmass = model.PVTPropertyFunctions.get( ...
+                model, state, 'BacterialMass');
+            rho = model.PVTPropertyFunctions.get(model, state, 'Density');
+            if iscell(rho)
+                rhoL = rho{liquid};
+            else
+                rhoL = rho(:, liquid);
+            end
+
+            rate = zeros(model.G.cells.num, nreact);
+            for i = 1:nreact
+                if iscell(psigrowth)
+                    growth = psigrowth{i};
+                else
+                    growth = psigrowth(:, i);
+                end
+                if iscell(bmass)
+                    mass = bmass{i};
+                else
+                    mass = bmass(:, i);
+                end
+                rate(:, i) = value(bcrm.nbactMax(i).*growth.*mass./ ...
+                    (bcrm.Y_H2(i).*rhoL));
             end
         end
 

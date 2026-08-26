@@ -88,8 +88,23 @@ classdef BiochemistryGenericFacilityModel < GenericFacilityModel
                 psigrowth = model.getProps(flowState, 'CarbonLimitedGrowthRate');
                 psidecay  = model.getProps(flowState, 'PsiDecayRate');   % bbact * nbact [1/s]
                 bmass     = rm.PVTPropertyFunctions.get(rm, state, 'BacterialMass');  % pv * S_l * rho_l * nbact [kg]
+                nbact     = rm.getProp(state, 'nbact');
                 for i=1:nbioreact
                     src_growthdecay{i} = (psigrowth{i} - psidecay{i}).* bmass{i} - reg .* bmass{i};
+                    if iscell(nbact)
+                        nbact_i = nbact{i};
+                    else
+                        nbact_i = nbact(:, i);
+                    end
+                    % Treat the normalized biomass floor as an active
+                    % bound. Without this complementarity condition,
+                    % decay requests nbact < floor while updateState clips
+                    % every Newton iterate back to the floor, leaving an
+                    % irreducible residual and forcing timestep cuts.
+                    activeFloor = value(nbact_i) <= ...
+                        rm.bact_capProp.*(1 + sqrt(eps));
+                    negativeSource = value(src_growthdecay{i}) < 0;
+                    src_growthdecay{i}(activeFloor & negativeSource) = 0;
                 end
             end
 

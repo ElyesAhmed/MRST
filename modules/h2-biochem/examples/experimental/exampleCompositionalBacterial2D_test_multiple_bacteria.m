@@ -34,7 +34,7 @@ deck = readEclipseDeck(dataFile);
 
 %% Warn about computational cost
 warning('ComputationalCost:High', ...
-    ['This is a multiple-cycle example; consider reducing cycles for faster runs.']);
+    'This is a multiple-cycle example; consider reducing cycles for faster runs.');
 
 %% Set up black-oil model and schedule
 [~, ~, state0Bo, modelBo, scheduleBo, ~] = modelForSimple2DAquifer(deck, 'numcycles', 10);
@@ -55,11 +55,12 @@ biochemFluid = TableBioChemMixture(reactNames, biomassNames);
 % No overrides – uses default values from bioChemFluidsStructs.
 
 %% EOS – Soreide‑Whitson
+initialSO4 = 0.1;
 EOS = SoreideWhitsonEos(model.G, compFluid, ...
     'msalt', 0, ...
     'pH', 7.2, ...
     'initial_NaCl', 0, ...
-    'initial_SO4', 0.1, ...
+    'initial_SO4', initialSO4, ...
     'rho_water', 1000);
 model.EOSModel = EOS;
 
@@ -93,22 +94,16 @@ nbact0 = [15 15 15]; % Initial bacteria (normalized)
 nc_bact = [120, 120, 120];
 cp = [1.0, 1.0, 1.0];
 modelWithClog = setupBioCloggingModel(model, nbact0, nc_bact, cp, clogModel);
-caseNameWithClogging = [baseName '_WITH_CLOGGING'];
 
 %% Initialize compositional state (with tracers for sulfate)
-if bacteriamodel
-    nbact0 = [15 15 15];  % normalized initial biomass (same for all three)
-    state0 = initCompositionalStateBacteria(modelWithClog, state0.pressure, T0, state0.s, comp0, nbact0, EOS);
-else
-    state0 = initCompositionalState(modelWithClog, state0.pressure, T0, state0.s, comp0, EOS);
-end
+state0 = initCompositionalStateBacteria( ...
+    modelWithClog, state0.pressure, T0, state0.s, comp0, nbact0, EOS);
 
 % Add sulfate and bisulfide tracers (if SRB is active)
 % Note: modelWithClog.sulfateReduction will be set true because SRB reaction exists.
 if isa(modelWithClog.EOSModel, 'SoreideWhitsonEos') && modelWithClog.sulfateReduction
-    initial_SO4 = 0.25;  % mol/kgw (default from your 1D setup)
     rho_water = 1000;    % kg/m3
-    state0.tracerSO4 = repmat(initial_SO4 * rho_water, nc, 1);
+    state0.tracerSO4 = repmat(initialSO4 * rho_water, nc, 1);
     state0.tracerHS  = zeros(nc, 1);
     state0.h2sDissolvedLag = zeros(nc, 1);
 end
@@ -158,8 +153,14 @@ simulatePackedProblem(problemWithClogging,'RestartStep',1);
 % --- Scenario 2: With bacteria but without clogging
 caseNameNoClogging = [baseName '_NO_CLOGGING_DIFF__DISP'];
 modelNoClog  = setupBioCloggingModel(model, nbact0, nc_bact, cp, false);
-% Disable clogging by not calling setupBioCloggingModel
-problemNoClogging = packSimulationProblem(state0, modelNoClog, schedule, caseNameNoClogging, 'NonLinearSolver', nls);
+[nlsNoClog, ~] = setupOptimizedLinearSolver(modelNoClog, ...
+    'complexityLevel', 'high', ...
+    'solverTolerance', 1e-3, ...
+    'maxNonlinIter', 10, ...
+    'cprDamp', []);
+problemNoClogging = packSimulationProblem( ...
+    state0, modelNoClog, schedule, caseNameNoClogging, ...
+    'NonLinearSolver', nlsNoClog);
 simulatePackedProblem(problemNoClogging);
 
 % --- Scenario 3: Abiotic (no bacteria)
@@ -167,10 +168,8 @@ caseNameNoBact = [baseName '_NO_BACT_DIFF__DISP'];
 modelNoBact = modelNoClog;
 modelNoBact.bacteriamodel = false;
 state0NoBact = initCompositionalState(modelNoBact, state0.pressure, T0, state0.s, comp0, EOS);
-% AMGCL retains its inferred cell block size. The abiotic model has a
-% different primary-variable layout, so it needs a separate solver.
-nlsNoBact = NonLinearSolver();
-[nls,lsolve] = setupOptimizedLinearSolver(modelNoBact, 'complexityLevel', 'high', ...
+% The abiotic model has a different primary-variable layout.
+[nlsNoBact, ~] = setupOptimizedLinearSolver(modelNoBact, 'complexityLevel', 'high', ...
     'solverTolerance', 1e-3, ...
     'maxNonlinIter', 10, ...
     'cprDamp', []);

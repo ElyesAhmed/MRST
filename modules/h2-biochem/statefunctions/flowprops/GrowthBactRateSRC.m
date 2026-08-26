@@ -71,6 +71,17 @@ classdef GrowthBactRateSRC < StateFunction
 
             % Get liquid mole fractions (EOS components)
             x = rm.getProp(state, 'x');
+            h2Active = [];
+            if isa(rm, 'BiochemistryPhreeqcModel') && ...
+                    rm.isSequentialH2BiochemPhreeqcBackend()
+                threshold = getH2ActivationThreshold(rm);
+                idxH2Overall = find(strcmpi(namecp, 'H2') | ...
+                    strcmpi(namecp, 'Hydrogen'), 1);
+                assert(~isempty(idxH2Overall), ...
+                    'Hybrid PHREEQC kinetics require an H2 EOS component.');
+                overallH2 = state.components(:, idxH2Overall);
+                h2Active = value(overallH2) > threshold;
+            end
 
             % Loop over reactions
             for i = 1:nbioreact
@@ -138,7 +149,15 @@ classdef GrowthBactRateSRC < StateFunction
                             hco3 = feedback.hco3Molality .* rm.EOSModel.rho_water;
                             pH = feedback.pH;
                             pKa1 = feedback.carbonatePka1;
-                            co2FromPhreeqc = feedback.co2Molality .* ...
+                            if isfield(feedback, 'totalCarbonMolality')
+                                totalCarbon = feedback.totalCarbonMolality;
+                            else
+                                totalCarbon = feedback.co2Molality + ...
+                                    feedback.hco3Molality;
+                            end
+                            % UGFACT/PHREEQC MET and ACE kinetics use
+                            % tot("Carbonate(4)"), not free aqueous CO2.
+                            xsub = totalCarbon .* ...
                                 rm.EOSModel.rho_water ./ rho_molar;
                         else
                             hco3 = state.tracerHCO3;
@@ -159,16 +178,12 @@ classdef GrowthBactRateSRC < StateFunction
                             else
                                 pKa1 = rm.carbonateBufferPka1;
                             end
-                            co2FromPhreeqc = [];
                         end
-                        hydrogenIon = 10.^(-pH);
-                        Ka1 = 10.^(-pKa1);
-                        co2FromBuffer = hco3 ./ rho_molar .* hydrogenIon ./ Ka1;
-                        if ~isempty(feedback)
-                            % Only the kinetic CO2 proxy is overridden;
-                            % conserved EOS and HCO3 balances remain state-based.
-                            xsub = max(co2FromPhreeqc, co2FromBuffer);
-                        else
+                        if isempty(feedback)
+                            hydrogenIon = 10.^(-pH);
+                            Ka1 = 10.^(-pKa1);
+                            co2FromBuffer = hco3 ./ rho_molar .* ...
+                                hydrogenIon ./ Ka1;
                             xsub = max(xsub, co2FromBuffer);
                         end
                     end
@@ -181,8 +196,74 @@ classdef GrowthBactRateSRC < StateFunction
                 axH2 = xH2 ./ (alphaH2 + xH2);
                 axsub = xsub ./ (alphasub + xsub);
 
-                Psigrowth{i} = Psigrowthmax .* axH2 .* axsub;
+                environmentalResponse = 1;
+                if ~isempty(feedback)
+                    environmentalResponse = microbialEnvironmentalResponse( ...
+                        bcrm.metabolicReaction{i}, value(state.T) - 273.15, ...
+                        feedback.pH, feedback.tds);
+                end
+                Psigrowth{i} = Psigrowthmax .* axH2 .* axsub .* ...
+                    environmentalResponse;
+                if ~isempty(h2Active)
+                    Psigrowth{i} = Psigrowth{i} .* h2Active;
+                end
             end
         end
     end
+end
+
+function threshold = getH2ActivationThreshold(model)
+threshold = 1e-3;
+options = model.phreeqcCouplingOptions;
+name = 'sequentialH2BiochemPhreeqcH2ActivationThreshold';
+if isfield(options, name)
+    threshold = options.(name);
+end
+validateattributes(threshold, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'nonnegative', '<=', 1}, ...
+    mfilename, name);
+end
+
+function response = microbialEnvironmentalResponse(reaction, temperatureC, pH, tds)
+switch reaction
+    case 'MethanogenicArchae'
+        temperatureLimits = [10, 45, 122];
+        pHLimits = [4.1, 7.7, 10.2];
+    case 'SulfateReducingBacteria'
+        temperatureLimits = [10, 48, 113];
+        pHLimits = [1, 7.01, 11.5];
+    case 'AcetogenicBacteria'
+        temperatureLimits = [25, 38, 72];
+        pHLimits = [3.6, 7.04, 9.5];
+    otherwise
+        error('GrowthBactRateSRC:UnsupportedEnvironmentalResponse', ...
+            'No PHREEQC environmental response is defined for reaction "%s".', reaction);
+end
+
+temperatureResponse = asymmetricParabolicResponse( ...
+    temperatureC, temperatureLimits);
+pHResponse = asymmetricParabolicResponse(pH, pHLimits);
+
+tdsResponse = ones(size(tds));
+salinityLimited = tds >= 50 & tds <= 300;
+tdsResponse(salinityLimited) = ...
+    (tds(salinityLimited) - 2*50 + 300).* ...
+    (300 - tds(salinityLimited))./(300 - 50)^2;
+tdsResponse(tds > 300) = 0;
+
+response = max(temperatureResponse, 0).*max(pHResponse, 0).* ...
+    max(tdsResponse, 0);
+end
+
+function response = asymmetricParabolicResponse(input, limits)
+lower = limits(1);
+optimum = limits(2);
+upper = limits(3);
+response = zeros(size(input));
+belowOptimum = input > lower & input < optimum;
+response(belowOptimum) = -(input(belowOptimum) - lower).* ...
+    (input(belowOptimum) + lower - 2*optimum)./(optimum - lower)^2;
+aboveOptimum = input >= optimum & input < upper;
+response(aboveOptimum) = -(input(aboveOptimum) - upper).* ...
+    (input(aboveOptimum) + upper - 2*optimum)./(optimum - upper)^2;
 end

@@ -102,7 +102,15 @@ classdef CarbonLimitedGrowthRate < StateFunction
                     -gammaCO2.*qbase./rhoL./molarMass(idxCO2), 0);
             end
 
-            carbonScale = 1;%min(1, carbonAvailable./max(co2Demand, 1e-30));
+            % Smoothly approximate min(1, available/demand). A hard min
+            % places the implicit reaction solve exactly on the
+            % zero-carbon boundary and creates a nonsmooth Jacobian that
+            % triggers severe timestep cutting. The p-norm form remains
+            % conservative while retaining useful derivatives.
+            carbonRatio = carbonAvailable./max(co2Demand, 1e-30);
+            smoothnessOrder = 8;
+            carbonScale = carbonRatio./ ...
+                (1 + carbonRatio.^smoothnessOrder).^(1/smoothnessOrder);
             for i = find(carbonReactions)
                 if iscell(psigrowth)
                     psigrowth{i} = psigrowth{i}.*carbonScale;

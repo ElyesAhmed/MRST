@@ -137,7 +137,6 @@ classdef BactConvertionRate < StateFunction
                 growthRateName = 'PsiGrowthRate';
             end
             psigrowth = model.getProps(state, growthRateName);
-
             % Get model parameters
             Y_H2 = bcrm.Y_H2;                      % Reaction yield scales
             gamma = rm.gammak;                     % Stoichiometric coefficients (nbioreact x ncomp)
@@ -189,7 +188,7 @@ classdef BactConvertionRate < StateFunction
                 % Calculate base conversion rate
                 % The source is based on microbial mass and the
                 % reaction-specific yield scale.
-                qbase = psigrowth_i .* bmass_i ./ Y_H2(i);
+                qbase = psigrowth_i.*bmass_i./Y_H2(i);
 
                 % For SRB, only a pH/salinity-dependent fraction of the
                 % total sulfide produced is volatile H2S; the rest stays
@@ -204,6 +203,7 @@ classdef BactConvertionRate < StateFunction
                     else
                         pH = [];
                     end
+
                     fH2S = rm.EOSModel.fractionH2SVolatile(state.T, pH);
                 end
 

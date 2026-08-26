@@ -44,6 +44,24 @@ for t = 1:nSteps
         continue;
     end
 
+    if isfield(state, 'cumulativeH2ConsumptionMoles')
+        cumulative = state.cumulativeH2ConsumptionMoles(:, idxReaction);
+        if t == 1
+            increment = cumulative;
+        else
+            assert(isfield(states{t - 1}, ...
+                'cumulativeH2ConsumptionMoles'), ...
+                ['Saved states contain an inconsistent cumulative H2 ', ...
+                 'consumption history.']);
+            previous = states{t - 1}.cumulativeH2ConsumptionMoles( ...
+                :, idxReaction);
+            increment = cumulative - previous;
+        end
+        H2_rate_per_cell(:, t) = increment./schedule.step.val(t);
+        H2_cum_per_cell(:, t) = cumulative;
+        continue;
+    end
+
     assert(isfield(state, 'h2ConsumptionRate'), ...
         ['Saved states do not contain the converged H2 source rate. ', ...
          'Rerun the simulation before post-processing H2 consumption.']);

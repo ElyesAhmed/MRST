@@ -19,8 +19,12 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExampleWithSRB_
 %   carbonateBuffer     - Enable a finite fixed-pH HCO3-/CO2 buffer
 %                         (default: false). Selects
 %                         BiochemistryPhreeqcModel.
+%   carbonateBufferPH   - Fixed pH used by the reduced carbonate buffer
+%                         (default: 6.24).
 %   initialHCO3         - Initial bicarbonate molality when the buffer is
 %                         enabled (default: Bentheimer value, 1.119e-3)
+%   initialOverallCO2   - Initial overall EOS CO2 mole fraction for runs
+%                         without PHREEQC timestep coupling (default: 0.0025).
 %   equilibrateInitialCO2 - Calibrate initial global CO2 so its flashed
 %                         liquid mole fraction is in ideal fixed-pH
 %                         equilibrium with initialHCO3 (default: false)
@@ -31,8 +35,9 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExampleWithSRB_
 %                         'sequential-h2biochem-phreeqc' (Windows IPhreeqcCOM equilibrium).
 %   phreeqcComProgId     - Registered Windows IPhreeqcCOM ProgID for
 %                         COM backends (default: IPhreeqcCOM.Object)
-%   phreeqc*WtFraction   - Dolomite, calcite, brucite, and quartz rock
-%                         weight fractions used to seed PHREEQC minerals
+%   phreeqc*WtFraction   - Dolomite, calcite, brucite, quartz, and inert
+%                         rock weight fractions. Inert rock contributes to
+%                         solid mass/density but is not sent to PHREEQC.
 %   phreeqcTimestepCoupling - After every converged timestep, equilibrate
 %                         each cell with the selected PHREEQC backend
 %                         (default: false).
@@ -43,20 +48,41 @@ function [biochemFluid, model, schedule, state0] = setupH2StorageExampleWithSRB_
 %   phreeqcPicardAbsoluteTolerance, phreeqcPicardRelativeTolerance,
 %   phreeqcPicardPHTolerance, phreeqcPicardPkaTolerance - sequential-h2biochem-phreeqc
 %                         outer Picard controls.
+%   phreeqcPicardAdaptiveRelaxation - Reduce relaxation when residuals grow.
+%   phreeqcPicardMinimumRelaxation - Lower adaptive-relaxation bound.
+%   phreeqcPicardFailOnNonconvergence - Reject unconverged outer iterations.
+%   phreeqcPicardCutTimestepOnNonconvergence - Bisect and retry rejected steps.
+%   phreeqcPicardMaxTimestepCuts - Maximum Picard-driven bisections per
+%       original schedule timestep.
 %   phreeqcElementBalanceAbsoluteTolerance,
 %   phreeqcElementBalanceRelativeTolerance - Scalar or six-element
 %                         H/C/S/Ca/Mg/Fe conservation tolerances.
+%   phreeqcReflashAbsoluteTolerance,
+%   phreeqcReflashRelativeTolerance - Scalar or one value per EOS component
+%                         for the post-PHREEQC mole-inventory audit.
+%   sequentialH2BiochemPhreeqcH2ActivationThreshold - Minimum overall H2
+%                         mole fraction for hybrid biological activity
+%                         (default: 1e-3, matching compositional PHREEQC).
 %   sequentialCompositionalPhreeqcInitialC4 - Initial nonvolatile C(4)
 %                         molality (default: 1.370e-3).
+%   sequentialCompositionalPhreeqcBatchSize - Number of cells per
+%                         IPhreeqcCOM RunString call (default: 1).
 %   paperBiomassKinetics - Use first-order biomass decay and the paper's
 %                         Nmax/N0 = 1e4 population range (default: false).
 %                         Selects BiochemistryPhreeqcModel because this
 %                         benchmark-specific kinetics option is not part of
 %                         the original BiochemistryModel.
-%   nbact0              - Initial normalized bacterial state, scalar or
-%                         [MET ACE SRB] vector (default: 60.6)
+%   nbact0              - Initial bacterial state, scalar or [MET ACE SRB]
+%                         vector. By default, the hybrid backend uses the
+%                         PHREEQC-normalized value 1; the compositional
+%                         reference retains its legacy diagnostic value 60.
 %   injectionCO2        - CO2 mole fraction in injected gas (default: 0,
 %                         matching the paper; nonzero values are extensions)
+%   scheduleMode        - 'injection' (default) for the 50-day injection
+%                         test, or 'complete' for 50-day injection,
+%                         150-day storage, and 50-day production.
+%   gridCells           - Number of cells in the 1D column (default: 50).
+%   domainLength        - Length of the 1D column in metres (default: 50).
 
 require ad-props compositional deckformat h2-biochem
 
@@ -69,34 +95,76 @@ opt = struct(...
     'molecularDispersion', false, ...
     'bioClogging', false, ...
     'carbonateBuffer', false, ...
+    'carbonateBufferPH', 6.24, ...
     'initialHCO3', 1.1119e-3, ...
+    'initialOverallCO2', 0.0025, ...
     'equilibrateInitialCO2', false, ...
     'phreeqcTimestepCoupling', false, ...
     'phreeqcBackend', 'sequential-compositional-phreeqc', ...
     'phreeqcDatabaseFile', '', ...
     'phreeqcComProgId', 'IPhreeqcCOM.Object', ...
-    'phreeqcPicardMaxIterations', 1, ...
-    'phreeqcPicardRelaxation', 0.9, ...
+    'phreeqcPicardMaxIterations', 30, ...
+    'phreeqcPicardRelaxation', 0.75, ...
     'phreeqcPicardAbsoluteTolerance', 1e-8, ...
     'phreeqcPicardRelativeTolerance', 1e-2, ...
     'phreeqcPicardPHTolerance', 2e-2, ...
     'phreeqcPicardPkaTolerance', 2e-2, ...
+    'phreeqcPicardAdaptiveRelaxation', false, ...
+    'phreeqcPicardMinimumRelaxation', 0.1, ...
+    'phreeqcPicardFailOnNonconvergence', false, ...
+    'phreeqcPicardCutTimestepOnNonconvergence', false, ...
+    'phreeqcPicardMaxTimestepCuts', 6, ...
     'sequentialCompositionalPhreeqcInitialC4', 1.370e-3, ...
     'phreeqcPicardReactionAbsoluteTolerance', 1e-12, ...
     'phreeqcPicardReactionRelativeTolerance', 1e-3, ...
     'phreeqcElementBalanceAbsoluteTolerance', 1e-7, ...
     'phreeqcElementBalanceRelativeTolerance', 1e-8, ...
+    'phreeqcReflashAbsoluteTolerance', 1e-7, ...
+    'phreeqcReflashRelativeTolerance', 1e-6, ...
+    'sequentialH2BiochemPhreeqcH2ActivationThreshold', 1e-3, ...
     'phreeqcDolomiteWtFraction', 0.02, ...
     'phreeqcCalciteWtFraction', 0, ...
     'phreeqcBruciteWtFraction', 0, ...
     'phreeqcQuartzWtFraction', 0.98, ...
+    'phreeqcInertWtFraction', 0, ...
+    'sequentialCompositionalPhreeqcBatchSize', 1, ...
     'paperBiomassKinetics', false, ...
-    'nbact0', 60.6, ...
-    'injectionCO2', 0.0);
+    'nbact0', [], ...
+    'injectionCO2', 0.0, ...
+    'scheduleMode', 'complete', ...
+    'gridCells', 50, ...
+    'domainLength', 50);
 opt = merge_options(opt, varargin{:});
 
+validateattributes(opt.gridCells, {'numeric'}, ...
+    {'scalar', 'integer', 'positive', 'finite'}, mfilename, 'gridCells');
+validateattributes(opt.domainLength, {'numeric'}, ...
+    {'scalar', 'real', 'positive', 'finite'}, mfilename, 'domainLength');
+validateattributes(opt.initialOverallCO2, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'nonnegative', '<=', 0.10}, ...
+    mfilename, 'initialOverallCO2');
+validateattributes(opt.sequentialCompositionalPhreeqcBatchSize, {'numeric'}, ...
+    {'scalar', 'integer', 'positive', 'finite'}, mfilename, ...
+    'sequentialCompositionalPhreeqcBatchSize');
+rockFractions = [opt.phreeqcDolomiteWtFraction, ...
+    opt.phreeqcCalciteWtFraction, opt.phreeqcBruciteWtFraction, ...
+    opt.phreeqcQuartzWtFraction, opt.phreeqcInertWtFraction];
+validateattributes(rockFractions, {'numeric'}, ...
+    {'vector', 'real', 'finite', 'nonnegative'}, mfilename, ...
+    'PHREEQC rock weight fractions');
+assert(sum(rockFractions) <= 1 + eps, ...
+    'PHREEQC reactive and inert rock weight fractions must sum to at most one.');
+validateattributes(opt.carbonateBufferPH, {'numeric'}, ...
+    {'scalar', 'real', 'finite', 'positive'}, mfilename, ...
+    'carbonateBufferPH');
 assert(opt.injectionCO2 >= 0 && opt.injectionCO2 <= 1, ...
     'injectionCO2 must be a mole fraction between zero and one.');
+assert(ischar(opt.scheduleMode) || ...
+    (isstring(opt.scheduleMode) && isscalar(opt.scheduleMode)), ...
+    'scheduleMode must be a character vector or scalar string.');
+scheduleMode = lower(strtrim(char(opt.scheduleMode)));
+assert(ismember(scheduleMode, {'injection', 'complete'}), ...
+    'scheduleMode must be ''injection'' or ''complete''.');
 assert(ischar(opt.phreeqcBackend) || ...
     (isstring(opt.phreeqcBackend) && isscalar(opt.phreeqcBackend)), ...
     'phreeqcBackend must be a character vector or scalar string.');
@@ -120,15 +188,20 @@ if opt.phreeqcTimestepCoupling
     assert(contains(lower(char(opt.phreeqcDatabaseFile)), 'phreeqc_modified.dat'), ...
         ['COM PHREEQC backends require PHREEQC_Modified.DAT, not a ', ...
          'standard PHREEQC database: %s'], opt.phreeqcDatabaseFile);
+    opt.phreeqcDatabaseFile = stagePhreeqcDatabaseForWindows( ...
+        char(opt.phreeqcDatabaseFile));
     balanceTolerances = {'phreeqcElementBalanceAbsoluteTolerance', ...
-        'phreeqcElementBalanceRelativeTolerance'};
+        'phreeqcElementBalanceRelativeTolerance', ...
+        'phreeqcReflashAbsoluteTolerance', ...
+        'phreeqcReflashRelativeTolerance'};
     for i = 1:numel(balanceTolerances)
         name = balanceTolerances{i};
         values = opt.(name);
         validateattributes(values, {'numeric'}, ...
             {'vector', 'real', 'finite', 'nonnegative'}, mfilename, name);
         assert(isscalar(values) || numel(values) == 6, ...
-            '%s must be scalar or contain H/C/S/Ca/Mg/Fe values.', name);
+            ['%s must be scalar or contain six values for either ', ...
+             'H/C/S/Ca/Mg/Fe or the six EOS components.'], name);
     end
 end
 if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
@@ -138,6 +211,20 @@ if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
     validateattributes(opt.phreeqcPicardRelaxation, {'numeric'}, ...
         {'scalar', 'real', 'finite', '>', 0, '<=', 1}, mfilename, ...
         'phreeqcPicardRelaxation');
+    validateattributes(opt.phreeqcPicardMinimumRelaxation, {'numeric'}, ...
+        {'scalar', 'real', 'finite', '>', 0, ...
+        '<=', opt.phreeqcPicardRelaxation}, ...
+        mfilename, 'phreeqcPicardMinimumRelaxation');
+    picardFlags = {'phreeqcPicardAdaptiveRelaxation', ...
+        'phreeqcPicardFailOnNonconvergence', ...
+        'phreeqcPicardCutTimestepOnNonconvergence'};
+    for i = 1:numel(picardFlags)
+        validateattributes(opt.(picardFlags{i}), {'logical', 'numeric'}, ...
+            {'scalar', 'real', 'finite'}, mfilename, picardFlags{i});
+    end
+    validateattributes(opt.phreeqcPicardMaxTimestepCuts, {'numeric'}, ...
+        {'scalar', 'integer', 'finite', 'nonnegative'}, ...
+        mfilename, 'phreeqcPicardMaxTimestepCuts');
     picardTolerances = {'phreeqcPicardAbsoluteTolerance', ...
         'phreeqcPicardRelativeTolerance', 'phreeqcPicardPHTolerance', ...
         'phreeqcPicardReactionAbsoluteTolerance', ...
@@ -145,6 +232,17 @@ if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
     for i = 1:numel(picardTolerances)
         validateattributes(opt.(picardTolerances{i}), {'numeric'}, ...
             {'scalar', 'real', 'finite', 'positive'}, mfilename, picardTolerances{i});
+    end
+    validateattributes(opt.sequentialH2BiochemPhreeqcH2ActivationThreshold, ...
+        {'numeric'}, {'scalar', 'real', 'finite', 'nonnegative', '<=', 1}, ...
+        mfilename, 'sequentialH2BiochemPhreeqcH2ActivationThreshold');
+end
+if isempty(opt.nbact0)
+    if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
+        % Hybrid biomass is N/N0, with N0 = 1e9 cells/kgw.
+        opt.nbact0 = 1;
+    else
+        opt.nbact0 = 60;
     end
 end
 
@@ -163,7 +261,8 @@ switch rateCase
 end
 
 %% H2Storage1D grid, rock, and transport properties
-G = computeGeometry(cartGrid([50, 1, 1], [50, 1, 1]));
+G = computeGeometry(cartGrid([opt.gridCells, 1, 1], ...
+    [opt.domainLength, 1, 1]));
 rock = makeRock(G, 100*milli*darcy, 0.20);
 
 Sw_table = [0, 0.16, 0.20, 0.24, 0.28, 0.32, 0.36, 0.4, 0.44, 0.48, 0.52, ...
@@ -197,24 +296,17 @@ reactNames = {'MethanogenicArchae', 'AcetogenicBacteria', ...
 biomassNames = {'bactM', 'bactA', 'bactS'};
 biochemFluid = TableBioChemMixture(reactNames, biomassNames);
 
-% H2Storage1D kinetics. Yield scales and bacterial-state limits retain the
-% h2-biochem formulation's calibration in both rate cases.
+% First-order decay uses the UGFACT ratio b = 0.01*mu.
 idxM = strcmp(biochemFluid.metabolicReaction, 'MethanogenicArchae');
 biochemFluid.Psigrowthmax(idxM) = metabolicGrowthRate(1);
 biochemFluid.alphaH2(idxM) = h2HalfSaturation(1);
 biochemFluid.alphasub(idxM) = 230e-6/55.5;
 biochemFluid.bbact(idxM) = 0.01*biochemFluid.Psigrowthmax(idxM);
-biochemFluid.Y_H2(idxM) = 0.03*3.333e12;
-biochemFluid.nbactMax(idxM) = 1e10;
-
 idxA = strcmp(biochemFluid.metabolicReaction, 'AcetogenicBacteria');
 biochemFluid.Psigrowthmax(idxA) = metabolicGrowthRate(2);
 biochemFluid.alphaH2(idxA) = h2HalfSaturation(2);
 biochemFluid.alphasub(idxA) = 115.5e-6/55.5;
 biochemFluid.bbact(idxA) = 0.01*biochemFluid.Psigrowthmax(idxA);
-biochemFluid.Y_H2(idxA) = 0.07*3.333e12;
-biochemFluid.nbactMax(idxA) = 1e10;
-
 idxS = strcmp(biochemFluid.metabolicReaction, 'SulfateReducingBacteria');
 biochemFluid.gamrH2(idxS) = -4;
 biochemFluid.gamrsub(idxS) = -1;
@@ -224,13 +316,34 @@ biochemFluid.Psigrowthmax(idxS) = metabolicGrowthRate(3);
 biochemFluid.alphaH2(idxS) = h2HalfSaturation(3);
 biochemFluid.alphasub(idxS) = 2751.5e-6/55.5;
 biochemFluid.bbact(idxS) = 0.01*biochemFluid.Psigrowthmax(idxS);
-biochemFluid.Y_H2(idxS) = 0.08*3.333e12;
-biochemFluid.nbactMax(idxS) = 1e9;
+if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
+    % Convert PHREEQC biomass yields to cells/mol H2. The hybrid bacterial
+    % state is N/N0 and nbactMax stores N0 per cubic metre of water.
+    % The *4 matches the compositional backend's per-mol-H2 yields
+    % (sequentialCompositionalPhreeqcYMET/ACE/SRB = [0.03 0.07 0.08]*4
+    % below): every metabolic reaction consumes 4 H2 per product mol.
+    % Omitting it makes the hybrid consume 4x more H2 per unit of biomass
+    % growth than the PHREEQC RATES do (verified empirically: a flat
+    % ~5.6x cap-level per-cell MET rate ratio at identical DIC/pH/N).
+    cellMass = 1e-14;
+    scale_calibration = 1;
+    biomassMolarMass = 24.6;
+    initialPopulationScale = 1e9*1000;
+    biochemFluid.Y_H2 = [0.03, 0.07, 0.08].*4.* ...
+        biomassMolarMass./cellMass/scale_calibration;
+    biochemFluid.nbactMax(:) = initialPopulationScale;
+else
+    % These fields are diagnostics only for compositional PHREEQC because
+    % PHREEQC owns its biomass and reaction sources. Preserve the previous
+    % values so selecting the hybrid backend cannot alter the reference.
+    biochemFluid.Y_H2 = [0.03, 0.07, 0.08].*3.333e12;
+    biochemFluid.nbactMax(:) =[1.0, 1.0, 1.0]*1e10;
+end
 
 % H2Storage1D initial pH, Na concentration used as NaCl-equivalent
 % salinity, and S6 sulfate concentration. These remain fixed except for
 % sulfate/HS tracer transport and reaction; no PHREEQC chemistry is used.
-pH0 = 6.24;
+pH0 = opt.carbonateBufferPH;
 initialNaCl = 2.865;
 initialSO4 = 4.664e-3;
 initialHCO3 = opt.initialHCO3;
@@ -255,6 +368,10 @@ phreeqcCouplingOptions = struct( ...
         opt.phreeqcElementBalanceAbsoluteTolerance, ...
     'phreeqcElementBalanceRelativeTolerance', ...
         opt.phreeqcElementBalanceRelativeTolerance, ...
+    'phreeqcReflashAbsoluteTolerance', ...
+        opt.phreeqcReflashAbsoluteTolerance, ...
+    'phreeqcReflashRelativeTolerance', ...
+        opt.phreeqcReflashRelativeTolerance, ...
     'Na', 2.865, ...
     'Ca', 0.2857, ...
     'Mg', 0.1144, ...
@@ -268,6 +385,8 @@ phreeqcCouplingOptions = struct( ...
     'calciteWtFraction', opt.phreeqcCalciteWtFraction, ...
     'bruciteWtFraction', opt.phreeqcBruciteWtFraction, ...
     'quartzWtFraction', opt.phreeqcQuartzWtFraction, ...
+    'inertWtFraction', opt.phreeqcInertWtFraction, ...
+    'inertDensity', 2650, ...
     'initialDolomiteMoles', [], ...
     'initialCalciteMoles', [], ...
     'initialBruciteMoles', [], ...
@@ -296,6 +415,8 @@ phreeqcCouplingOptions.sequentialCompositionalPhreeqcNmax = 1e13;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcCellMass = 1e-14;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcBiomassMW = 24.6;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcSteps = 5;
+phreeqcCouplingOptions.sequentialCompositionalPhreeqcBatchSize = ...
+    opt.sequentialCompositionalPhreeqcBatchSize;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcInitialAnhydriteMoles = 0;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcInitialGoethiteMoles = 0;
 phreeqcCouplingOptions.sequentialCompositionalPhreeqcInitialPortlanditeMoles = 0;
@@ -313,6 +434,18 @@ phreeqcCouplingOptions.sequentialH2BiochemPhreeqcReactionAbsoluteTolerance = ...
     opt.phreeqcPicardReactionAbsoluteTolerance;
 phreeqcCouplingOptions.sequentialH2BiochemPhreeqcReactionRelativeTolerance = ...
     opt.phreeqcPicardReactionRelativeTolerance;
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcAdaptiveRelaxation = ...
+    logical(opt.phreeqcPicardAdaptiveRelaxation);
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcMinimumRelaxation = ...
+    opt.phreeqcPicardMinimumRelaxation;
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcFailOnNonconvergence = ...
+    logical(opt.phreeqcPicardFailOnNonconvergence);
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcCutTimestepOnNonconvergence = ...
+    logical(opt.phreeqcPicardCutTimestepOnNonconvergence);
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcMaxTimestepCuts = ...
+    opt.phreeqcPicardMaxTimestepCuts;
+phreeqcCouplingOptions.sequentialH2BiochemPhreeqcH2ActivationThreshold = ...
+    opt.sequentialH2BiochemPhreeqcH2ActivationThreshold;
 %% Model assembly
 backend = DiagonalAutoDiffBackend('modifyOperators', true);
 modelOptions = { ...
@@ -341,6 +474,11 @@ if usePhreeqcModel
 else
     model = BiochemistryModel(G, rock, fluid, compFluid, biochemFluid, ...
         true, backend, modelOptions{:});
+end
+if opt.paperBiomassKinetics
+    % UGFACT constrains every population between N0 and Nmax=N0*1e4.
+    model.bact_capProp = 1;
+    model.bact_maxProp = 1e4;
 end
 model.EOSModel = eos;
 model.OutputStateFunctions{end + 1} = 'ComponentPhaseDensity';
@@ -376,7 +514,7 @@ end
 %% H2Storage1D initial fluid state
 p0 = 150*barsa;
 T0 = 273.15 + 60;
-zCO2 = 0.0025;
+zCO2 = opt.initialOverallCO2;
 if opt.phreeqcTimestepCoupling
     % H2Storage1D starts with no EOS CO2; C(4) is represented solely by
     % Solution.C4 and must not be duplicated in the volatile inventory.
@@ -408,60 +546,6 @@ if opt.bacteriamodel
         state0.tracerHCO3 = repmat(max(initialNonvolatileDIC, 0)*eos.rho_water, ncell, 1);
     end
 end
-% Add extra initial aqueous carbon
-% extraC4 = e-1; % mol/kg water
-% state0.tracerHCO3 = [0.5550
-%     0.5395
-%     0.5286
-%     0.5225
-%     0.5193
-%     0.5176
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701
-%     1.3701]; 
-% state0.tracerHCO3= state0.tracerHCO3 + ...
-%     extraC4*model.EOSModel.rho_water;
 if opt.phreeqcTimestepCoupling
     initialCa = phreeqcCouplingOptions.Ca;
     initialMg = phreeqcCouplingOptions.Mg;
@@ -471,16 +555,28 @@ if opt.phreeqcTimestepCoupling
     state0.phreeqcPE = 4*ones(ncell, 1);
     state0 = initializeH2StoragePhreeqcCouplingState(model, state0);
 end
-%% H2Storage1D benchmark: 50 d injection, 150 d storage, 50 d production.
-dtInj = repmat(2*day, 25, 1);
-dtStor = repmat(2*day, 75, 1);
-dtProd = repmat(2*day, 25, 1);
-
-schedule.step.val = [dtInj; dtStor; dtProd];
-schedule.step.control = [ ...
-    ones(numel(dtInj), 1); ...
-    2*ones(numel(dtStor), 1); ...
-    3*ones(numel(dtProd), 1)];
+%% H2Storage1D benchmark schedule.
+if strcmp(phreeqcBackend, 'sequential-h2biochem-phreeqc')
+    % UGFACT integrates biogeochemistry in five substeps per 2-day flow
+    % step. The MRST biomass balance also requires mu*dt < 1 to retain a
+    % positive backward-Euler growth solution at the high-rate setting.
+    scheduleTimestep = 2*day/5;
+else
+    scheduleTimestep = 2*day;
+end
+dtInj = repmat(scheduleTimestep, 50*day/scheduleTimestep, 1);
+if strcmp(scheduleMode, 'complete')
+    dtStor = repmat(scheduleTimestep, 150*day/scheduleTimestep, 1);
+    dtProd = repmat(scheduleTimestep, 50*day/scheduleTimestep, 1);
+    schedule.step.val = [dtInj; dtStor; dtProd];
+    schedule.step.control = [ ...
+        ones(numel(dtInj), 1); ...
+        2*ones(numel(dtStor), 1); ...
+        3*ones(numel(dtProd), 1)];
+else
+    schedule.step.val = dtInj;
+    schedule.step.control = ones(numel(dtInj), 1);
+end
 
 [~, ~, ~, ~, Z_V] = standaloneFlash(p0, T0, [0, 1, 0, 0, 0, 0], eos);
 Bg = 101325/298.15*Z_V*T0/p0;
@@ -493,22 +589,28 @@ W1 = verticalWell([], G, rock, 1, 1, 1, ...
     'comp_i', [0, 1], 'sign', 1, 'radius', 0.1);
 W1(1).components = injComponents;
 
-W2 = verticalWell([], G, rock, 1, 1, 1, ...
-    'Type', 'rate', 'Val', 0, 'Name', 'Shut-in', ...
-    'comp_i', [0, 1], 'sign', 1, 'radius', 0.1);
-W2(1).components = [0, 1, 0, 0, 0, 0];
+if strcmp(scheduleMode, 'complete')
+    W2 = verticalWell([], G, rock, 1, 1, 1, ...
+        'Type', 'rate', 'Val', 0, 'Name', 'Shut-in', ...
+        'comp_i', [0, 1], 'sign', 1, 'radius', 0.1);
+    W2(1).components = [0, 1, 0, 0, 0, 0];
 
-W3 = verticalWell([], G, rock, 1, 1, 1, ...
-    'Type', 'grat', 'Val', -rate, 'Name', 'Producer', ...
-    'comp_i', [0.5, 0.5], 'sign', -1, 'radius', 0.1);
-W3(1).components = [0, 1, 0, 0, 0, 0];
-W3.lims.bhp = p0;
+    W3 = verticalWell([], G, rock, 1, 1, 1, ...
+        'Type', 'grat', 'Val', -rate, 'Name', 'Producer', ...
+        'comp_i', [0.5, 0.5], 'sign', -1, 'radius', 0.1);
+    W3(1).components = [0, 1, 0, 0, 0, 0];
+    W3.lims.bhp = p0;
 
-tmp = cell(4, 1);
-schedule.control = struct('W', tmp, 'bc', tmp, 'src', tmp);
-schedule.control(1).W = W1;
-schedule.control(2).W = W2;
-schedule.control(3).W = W3;
+    tmp = cell(3, 1);
+    schedule.control = struct('W', tmp, 'bc', tmp, 'src', tmp);
+    schedule.control(1).W = W1;
+    schedule.control(2).W = W2;
+    schedule.control(3).W = W3;
+else
+    tmp = cell(1, 1);
+    schedule.control = struct('W', tmp, 'bc', tmp, 'src', tmp);
+    schedule.control(1).W = W1;
+end
 
 fprintf('H2Storage1D SRB tracer benchmark: pH %.2f, SO4 %.4g mol/kgw, NaCl-equivalent %.3f mol/kgw\n', ...
     pH0, initialSO4, initialNaCl);
@@ -599,4 +701,44 @@ function isAbsolute = isAbsolutePhreeqcPath(path)
 path = char(path);
 isAbsolute = ~isempty(regexp(path, '^[A-Za-z]:[\\/]|^\\\\', 'once')) || ...
     startsWith(path, filesep);
+end
+
+function databaseFile = stagePhreeqcDatabaseForWindows(databaseFile)
+% Avoid repeated IPhreeqcCOM access through the transient WSL UNC provider.
+persistent sourceFiles stagedFiles
+
+isWslUnc = startsWith(lower(databaseFile), '\\wsl.localhost\') || ...
+    startsWith(lower(databaseFile), '\\wsl$\');
+if ~isWslUnc
+    return;
+end
+
+if isempty(sourceFiles)
+    sourceFiles = {};
+    stagedFiles = {};
+end
+index = find(strcmpi(sourceFiles, databaseFile), 1);
+if ~isempty(index) && isfile(stagedFiles{index})
+    databaseFile = stagedFiles{index};
+    return;
+end
+
+stageDirectory = fullfile(tempdir, 'h2-biochem-phreeqc');
+if ~isfolder(stageDirectory)
+    [created, message] = mkdir(stageDirectory);
+    assert(created, 'Unable to create PHREEQC staging directory %s: %s', ...
+        stageDirectory, message);
+end
+[~, name, extension] = fileparts(databaseFile);
+stagedFile = [tempname(stageDirectory), '_', name, extension];
+[copied, message] = copyfile(databaseFile, stagedFile, 'f');
+assert(copied && isfile(stagedFile), ...
+    'Unable to stage PHREEQC database from %s to %s: %s', ...
+    databaseFile, stagedFile, message);
+
+sourceFiles{end + 1} = databaseFile;
+stagedFiles{end + 1} = stagedFile;
+databaseFile = stagedFile;
+fprintf('Staged PHREEQC database on the Windows-local filesystem: %s\n', ...
+    databaseFile);
 end
