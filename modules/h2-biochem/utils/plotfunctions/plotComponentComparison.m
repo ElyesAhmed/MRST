@@ -46,10 +46,10 @@ totalCO2_abiotic = cellfun(@(s) sum(s.FlowProps.ComponentTotalMass{idxCO2}), abi
 totalCH4_abiotic = cellfun(@(s) sum(s.FlowProps.ComponentTotalMass{idxCH4}), abioticStates);
 
 %% Create figure
-figure('Position', [100, 100, 1200, 400]);
+paperFigure([24, 8], 'Component Mass Comparison Relative to Abiotic Scenario');
 
 %% 1. H2 Loss
-subplot(1, 3, 1); hold on;
+ax1 = subplot(1, 3, 1); hold on;
 for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     scen = scenarios{scenIdx};
     totalH2 = cellfun(@(s) sum(s.FlowProps.ComponentTotalMass{idxH2}), scen.states);
@@ -57,10 +57,11 @@ for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     plot(timeYears, H2_loss, scen.line, ...
         'Color', scen.color, 'LineWidth', 2, 'DisplayName', scen.name);
 end
-title('H2 Loss (%)'); xlabel('Time (years)'); ylabel('H2 Loss (%)'); grid on; legend;
+title('H2 Loss (%)'); xlabel('Time (years)'); ylabel('H2 Loss (%)');
+legend('Box', 'off'); styleAxes(ax1);
 
 %% 2. CO2 Consumption
-subplot(1, 3, 2); hold on;
+ax2 = subplot(1, 3, 2); hold on;
 for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     scen = scenarios{scenIdx};
     totalCO2 = cellfun(@(s) sum(s.FlowProps.ComponentTotalMass{idxCO2}), scen.states);
@@ -68,10 +69,11 @@ for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     plot(timeYears, CO2_consumption, scen.line, ...
         'Color', scen.color, 'LineWidth', 2, 'DisplayName', scen.name);
 end
-title('CO2 Consumption (%)'); xlabel('Time (years)'); ylabel('CO2 Consumption (%)'); grid on;
+title('CO2 Consumption (%)'); xlabel('Time (years)'); ylabel('CO2 Consumption (%)');
+styleAxes(ax2);
 
 %% 3. CH4 Production
-subplot(1, 3, 3); hold on;
+ax3 = subplot(1, 3, 3); hold on;
 for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     scen = scenarios{scenIdx};
     totalCH4 = cellfun(@(s) sum(s.FlowProps.ComponentTotalMass{idxCH4}), scen.states);
@@ -79,14 +81,15 @@ for scenIdx = setdiff(1:numel(scenarios), abioticIdx)
     plot(timeYears, CH4_production, scen.line, ...
         'Color', scen.color, 'LineWidth', 2, 'DisplayName', scen.name);
 end
-title('CH4 Production (%)'); xlabel('Time (years)'); ylabel('CH4 Production (%)'); grid on;
+title('CH4 Production (%)'); xlabel('Time (years)'); ylabel('CH4 Production (%)');
+styleAxes(ax3);
 
 %% Global title
 sgtitle('Component Mass Comparison Relative to Abiotic Scenario');
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

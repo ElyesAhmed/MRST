@@ -25,10 +25,10 @@ function plotPressureAndSaturation(scenarios, timeYears)
 % SEE ALSO:
 %   plotComponentProfiles, plotBacterialEffects
 
-figure('Position', [100, 100, 1200, 500]);
+paperFigure([24, 10], 'Pressure and Saturation Profiles');
 
 %% 1. Average Pressure
-subplot(1, 2, 1);
+ax1 = subplot(1, 2, 1);
 hold on;
 for scenIdx = 1:numel(scenarios)
     scen = scenarios{scenIdx};
@@ -46,11 +46,11 @@ end
 title('Average Pressure');
 xlabel('Time (years)');
 ylabel('Pressure (bar)');
-grid on;
-legend;
+legend('Box', 'off');
+styleAxes(ax1);
 
 %% 2. Average Gas Saturation
-subplot(1, 2, 2);
+ax2 = subplot(1, 2, 2);
 hold on;
 for scenIdx = 1:numel(scenarios)
     scen = scenarios{scenIdx};
@@ -68,14 +68,14 @@ end
 title('Average Gas Saturation');
 xlabel('Time (years)');
 ylabel('Gas Saturation');
-grid on;
+styleAxes(ax2);
 
 %% Global title
 sgtitle('Pressure and Saturation Profiles');
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

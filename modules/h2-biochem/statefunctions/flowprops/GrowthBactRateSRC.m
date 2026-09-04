@@ -59,6 +59,7 @@ classdef GrowthBactRateSRC < StateFunction
             end
             bcrm = rm.biochemFluid;
             namecp = rm.getComponentNames();
+%            namecp = model.EOSModel.getComponentNames();
             nbioreact = bcrm.nbioreact;
             feedback = [];
             if ismethod(rm, 'getSequentialH2BiochemPhreeqcChemistryFeedback')

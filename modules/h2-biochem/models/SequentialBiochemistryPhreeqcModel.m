@@ -144,6 +144,10 @@ classdef SequentialBiochemistryPhreeqcModel < BiochemistryPhreeqcModel
 
         %-----------------------------------------------------------------%
         function model = validateModel(model, varargin)
+            % Validate as a regular BiochemistryPhreeqcModel, then (re)build
+            % the internal flow-stage/reaction-stage sub-models so they
+            % stay in sync with any option changed after construction (see
+            % buildStageModels).
             model = validateModel@BiochemistryPhreeqcModel(model, varargin{:});
             model = model.buildStageModels();
         end
@@ -240,6 +244,22 @@ classdef SequentialBiochemistryPhreeqcModel < BiochemistryPhreeqcModel
 
         %-----------------------------------------------------------------%
         function [state, report] = stepFunction(model, state, state0, dt, drivingForces, linsolve, nls, iteration, varargin) %#ok<INUSD>
+            % Override of the standard Newton stepFunction, implementing
+            % the coarse-flow/local-reaction operator split in two stages
+            % run once per control step (stepFunctionIsLinear = true, so
+            % the outer NonLinearSolver calls this exactly once, with no
+            % outer Newton/Picard iteration at this level -- each stage
+            % still iterates internally to its own convergence):
+            %   1. One global flow+transport solve on flowStageModel
+            %      (reactionsEnabled = false: no biological source terms).
+            %   2. nSub local reaction substeps on reactionStageModel
+            %      (localReactionMode = true: no spatial flux/diffusion),
+            %      each closed by a PHREEQC equilibrium call that refreshes
+            %      the chemistry feedback entering the next substep's
+            %      kinetics.
+            % See buildStageModels for why the two stage models are plain
+            % BiochemistryPhreeqcModel instances rather than instances of
+            % this class.
             timer = tic();
             flowModel     = model.flowStageModel;
             reactionModel = model.reactionStageModel;
@@ -378,7 +398,7 @@ end
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

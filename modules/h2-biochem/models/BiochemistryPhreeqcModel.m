@@ -1,5 +1,6 @@
 classdef BiochemistryPhreeqcModel < BiochemistryModel
-    % Biochemical model with optional PHREEQC timestep coupling
+    % Extends BiochemistryModel with optional, timestep-level coupling to
+    % an external PHREEQC geochemistry engine.
     %
     % SYNOPSIS:
     %   model = BiochemistryPhreeqcModel(G, rock, fluid)
@@ -7,8 +8,37 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
     %   model = BiochemistryPhreeqcModel(..., 'pn1', vn1, ...)
     %
     % DESCRIPTION:
-    %   Extends BiochemistryModel with the state, validation, and timestep
-    %   hooks required by the supported PHREEQC coupling backends.
+    %   BiochemistryPhreeqcModel adds an optional PHREEQC coupling on top
+    %   of BiochemistryModel's compositional-flow + Monod-kinetics base.
+    %   With phreeqcTimestepCoupling = false (the default) it behaves
+    %   exactly like BiochemistryModel. With it enabled, one of two
+    %   mutually exclusive backends (phreeqcBackend) is used after every
+    %   accepted timestep:
+    %
+    %     - 'sequential-compositional-phreeqc': PHREEQC owns the MET/ACE/
+    %       SRB kinetics and biomass entirely (via runSequentialCompositionalPhreeqcCoupling).
+    %       This model's own bacterial reaction source terms
+    %       (BactConvertionRate) become a no-op for this backend to avoid
+    %       double counting -- see isSequentialCompositionalPhreeqcBackend.
+    %
+    %     - 'sequential-h2biochem-phreeqc': MRST retains ownership of the
+    %       Monod kinetics and biomass transport (as in BiochemistryModel),
+    %       and PHREEQC is instead used to periodically re-equilibrate
+    %       aqueous/mineral chemistry -- pH, carbonate speciation, and
+    %       dolomite/calcite/anhydrite buffering -- via
+    %       runSequentialH2BiochemPhreeqcEquilibrium. The result is cached
+    %       in sequentialH2BiochemPhreeqcChemistryFeedback and fed back
+    %       into the next kinetics evaluation. This backend is driven
+    %       either by the outer Picard loop in
+    %       simulateSequentialH2BiochemPhreeqc, or, without any outer
+    %       iteration, as the two internal building blocks of
+    %       SequentialBiochemistryPhreeqcModel's coarse-flow/local-reaction
+    %       split (see that class).
+    %
+    %   It also adds an optional fixed-pH carbonate buffer
+    %   (carbonateBuffer/carbonateBufferPH) for cases that need a
+    %   simplified HCO3-/CO2 chemistry without a full PHREEQC coupling,
+    %   and Ca/Mg aqueous tracers used by the PHREEQC backends.
     %
     % REQUIRED PARAMETERS:
     %   G         - Simulation grid
@@ -17,23 +47,45 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
     %   compFluid - Compositional fluid mixture (optional)
     %
     % OPTIONAL PARAMETERS:
-    %   'property' - Set property to the specified value
+    %   'phreeqcTimestepCoupling' - Enable the post-timestep PHREEQC
+    %                               coupling (default false; requires
+    %                               Windows and a registered IPhreeqcCOM
+    %                               server).
+    %   'phreeqcBackend'          - 'sequential-compositional-phreeqc'
+    %                               (default) or 'sequential-h2biochem-phreeqc'.
+    %   'phreeqcDatabaseFile'     - Absolute path to the PHREEQC database
+    %                               (PHREEQC_Modified.DAT).
+    %   'phreeqcComProgId'        - Registered IPhreeqcCOM server ProgID
+    %                               (default 'IPhreeqcCOM.Object').
+    %   'phreeqcCouplingOptions'  - Struct of backend-specific coupling
+    %                               parameters (kinetic rate constants,
+    %                               brine composition, tolerances, ...);
+    %                               see getCouplingOptions in the
+    %                               corresponding utils/run*.m file for the
+    %                               full field list and defaults.
+    %   'carbonateBuffer'         - Enable the simplified fixed-pH HCO3-/
+    %                               CO2 buffer (default false).
+    %   'bacterialDecayOrder'     - 1 (first-order) or 2 (legacy
+    %                               quadratic, default) biomass decay.
     %
     % RETURNS:
-    %   Class instance
+    %   model - BiochemistryPhreeqcModel class instance
     %
     % SEE ALSO:
-    %   ReservoirModel, ThreePhaseCompositionalModel
+    %   BiochemistryModel, SequentialBiochemistryPhreeqcModel,
+    %   convertToSequentialBiochemistryPhreeqcModel,
+    %   simulateSequentialH2BiochemPhreeqc, ReservoirModel,
+    %   ThreePhaseCompositionalModel
 
     properties
         carbonateBuffer = false;          % Fixed-pH HCO3-/CO2 buffer
         carbonateBufferPH = 6.24;
         carbonateBufferPka1 = 6.35;
         phreeqcTimestepCoupling = false; % Post-timestep PHREEQC equilibration
-        phreeqcBackend = 'sequential-compositional-phreeqc';
-        phreeqcDatabaseFile = '';
-        phreeqcComProgId = 'IPhreeqcCOM.Object';
-        phreeqcCouplingOptions = struct();
+        phreeqcBackend = 'sequential-compositional-phreeqc'; % or 'sequential-h2biochem-phreeqc'
+        phreeqcDatabaseFile = '';          % Absolute path to PHREEQC_Modified.DAT
+        phreeqcComProgId = 'IPhreeqcCOM.Object'; % Registered IPhreeqcCOM server ProgID
+        phreeqcCouplingOptions = struct(); % Backend-specific coupling parameters (kinetics, brine, tolerances)
         % Set only by simulateSequentialH2BiochemPhreeqc. Keeping the
         % automatic post-step hook disabled prevents an accidental,
         % lagged one-pass chemistry update for this backend.
@@ -202,6 +254,12 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
         end
 
         function model = validateModel(model, varargin)
+            % As BiochemistryModel.validateModel, plus a guard specific to
+            % the 'sequential-compositional-phreeqc' backend: spatial
+            % bacterial diffusion/chemotaxis is rejected (PHREEQC's
+            % kinetics are purely local, with no notion of biomass
+            % transport), and a one-time notice is printed explaining that
+            % MRST's own nbact equation is a no-op under this backend.
             if model.bacteriamodel
                 if isempty(model.FacilityModel) || ...
                         ~isa(model.FacilityModel, 'BiochemistryGenericFacilityModel')
@@ -312,6 +370,11 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
         end
 
         function [vars, names, origin] = getPrimaryVariables(model, state)
+            % As BiochemistryModel.getPrimaryVariables. The PHREEQC-owned
+            % biomass under the 'sequential-compositional-phreeqc' backend
+            % (sequentialCompositionalPhreeqcBiomass*) is plain state
+            % data updated after the coupling call, not a primary
+            % variable/AD unknown, so it does not appear here.
             [p, z] = model.getProps(state, 'pressure', 'z');
             z = ensureMinimumFraction(z, model.EOSModel.minimumComposition);
             z = expandMatrixToCell(z);
@@ -358,6 +421,17 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
             end
         end
         function [eqs, names, types, state] = getModelEquations(model, state0, state, dt, drivingForces, varargin)
+            % As BiochemistryModel.getModelEquations, with two additions:
+            % when carbonateBuffer is active, the pre-step aqueous carbon
+            % inventory is cached (carbonSubstrateMoles/Dt) so the
+            % methanogenic/acetogenic growth rate can be capped by the
+            % carbon actually available (see CarbonLimitedGrowthRate); and
+            % an hco3Sink accumulator tracks the carbonate drawn down by
+            % the buffer, used later in this method to close its balance.
+            % None of this touches PHREEQC directly -- PHREEQC coupling
+            % happens after the timestep converges (see the run*Coupling
+            % utilities and BiochemistryPhreeqcModel's class-level docs).
+            %
             % Discretize
             [eqs, flux, names, types] = model.FlowDiscretization.componentConservationEquations(model, state, state0, dt);
             if model.bacteriamodel && model.carbonateBuffer && model.reactionsEnabled
@@ -637,6 +711,10 @@ classdef BiochemistryPhreeqcModel < BiochemistryModel
         end
 
         function state = initStateAD(model, state, vars, names, origin)
+            % As BiochemistryModel.initStateAD, except nbact is only
+            % pulled from the primary-variable vector when it actually is
+            % one; under 'sequential-compositional-phreeqc' it is carried
+            % through unchanged from state (see getPrimaryVariables).
             if model.bacteriamodel
 
                 isP = strcmp(names, 'pressure');
@@ -903,6 +981,12 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
 
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
+            % Like BiochemistryModel.updateAfterConvergence, but skips the
+            % H2-consumption diagnostic entirely when PHREEQC owns the
+            % kinetics ('sequential-compositional-phreeqc'), and, for the
+            % 'sequential-h2biochem-phreeqc' backend, additionally
+            % accumulates this step's consumption for the outer Picard
+            % loop / coarse-flow-local-reaction substep bookkeeping.
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
             if model.bacteriamodel && ~model.isSequentialCompositionalPhreeqcBackend()
                 if model.reactionsEnabled
@@ -1175,23 +1259,6 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
     end
 end
 
-function state = capSaturation(model, state, name, minvalue, maxvalue)
-% Ensure saturation remains within bounds
-v = model.getProp(state, name);
-if iscell(v)
-    for i = 1:numel(v)
-        val = v{i};
-        val = max(minvalue, val);
-        if nargin > 4, val = min(val, maxvalue); end
-        v{i} = val;
-    end
-else
-    v = max(minvalue, v);
-    if nargin > 4, v = min(v, maxvalue); end
-end
-state = model.setProp(state, name, v);
-end
-
 function flag = normalizeTransportFlag(flag, name)
 validateattributes(flag, {'logical', 'numeric'}, {'scalar', 'real', 'finite'}, ...
     mfilename, name);
@@ -1333,7 +1400,7 @@ state.sequentialH2BiochemPhreeqcCumulativeH2ConsumptionMoles = ...
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

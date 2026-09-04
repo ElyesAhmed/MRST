@@ -1,14 +1,27 @@
-function [model, poro0, perm0] = setupBioCloggingModel(model, nbact0, nc, cp, clogModel)
+function [model, poro0, perm0] = setupBioCloggingModel(model, nbact0, nc, cp, clogModel, reference)
 % setupBioCloggingModelMulti -- Add multi-species bio-clogging effects
 %
 % PARAMETERS:
 %   nbact0 - Cell array of initial bacterial concentrations (e.g., {nbact1_0, nbact2_0})
 %   nc     - Vector of characteristic concentrations matching the cell array length [nc1, nc2]
 %   cp     - Vector of clogging strengths matching the cell array length [cp1, cp2]
+%
+% OPTIONAL:
+%   clogModel - Enable the feedback (default true).
+%   reference - 'zero' (default) references the pore-volume multiplier to
+%               zero biomass, so the multiplier is already < 1 at the
+%               initial biomass nbact0. 'initial' normalises the multiplier
+%               to 1 at nbact0, so clogging acts only on biomass grown past
+%               its initial value -- use this when comparing a clogging run
+%               against a no-clogging baseline with the same initial rock.
 
-if nargin < 5
+if nargin < 5 || isempty(clogModel)
     clogModel = true;
 end
+if nargin < 6 || isempty(reference)
+    reference = 'zero';
+end
+reference = validatestring(reference, {'zero', 'initial'}, mfilename, 'reference');
 
 poro0 = model.rock.poro;
 perm0 = model.rock.perm(:, 1);
@@ -30,18 +43,35 @@ if clogModel
     assert(numel(nc) == num_species && numel(cp) == num_species, ...
         'nc and cp must contain one value per bacterial species.');
     scale_sum = 0;
+    clog0     = 0;
     for i = 1:num_species
         scale_sum = scale_sum + cp(i) * (nbact0{i} ./ nc(i)).^2;
+        clog0     = clog0     + (nbact0{i} ./ nc(i)).^2;
     end
     scale = 1 + scale_sum;
 
-    % 2. Define the dynamic pore volume multiplier for multiple species
-    pvMult_nbact = @(varargin) 1 ./ (1 + scale .* evalCumulativeClog(varargin, nc));
+    % 2. Dynamic pore-volume feedback.  With reference='initial' the
+    %    porosity is lifted by numer0 = 1 + scale*clog0 so that, once the
+    %    pore-volume multiplier is applied to it, the *effective* porosity
+    %    and pore volume equal the original rock values at the initial
+    %    biomass nbact0 (clogging then acts only on biomass grown past
+    %    nbact0).  reference='zero' keeps numer0 = 1, i.e. the legacy
+    %    behaviour where the rock is already partly clogged at nbact0.
+    %
+    %    setupOperators bakes rock.poro(.,0) into operators.pv, and
+    %    DynamicFlowPoreVolume then multiplies operators.pv by pvMultR, so
+    %    the numer0 lift lives on rock.poro only and pvMultR stays
+    %    numer0-free -- otherwise numer0 would be applied twice.
+    if strcmp(reference, 'initial')
+        numer0 = 1 + scale .* clog0;
+    else
+        numer0 = 1;
+    end
+    denom = @(varargin) 1 + scale .* evalCumulativeClog(varargin, nc);
 
-    % 3. Assign porosity handles
-    model.fluid.pvMultR = @(p, varargin) pvMult_nbact(varargin{:});
+    model.fluid.pvMultR = @(p, varargin) 1 ./ denom(varargin{:});
 
-    poroFun = @(p, varargin) poro0 .* pvMult_nbact(varargin{:});
+    poroFun = @(p, varargin) poro0 .* numer0 ./ denom(varargin{:});
     model.rock.poro = poroFun;
 
     % 4. Define permeability update function (Kozeny–Carman)

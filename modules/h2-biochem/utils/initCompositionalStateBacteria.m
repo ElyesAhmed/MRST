@@ -22,7 +22,7 @@ function state = initCompositionalStateBacteria(model, p, T, s0, z0,nbact0, eos)
 %
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 
@@ -60,7 +60,6 @@ else
 end
 %==================bacteria model===============
 if model.bacteriamodel
-   %nbr_nbact = model.
     if size(nbact0, 1) == G.cells.num
         state.nbact = nbact0;
     else
@@ -70,7 +69,6 @@ end
 %================================================
 nls = getDefaultFlashNonLinearSolver();
 state = eos.validateState(state);
-% state.L = solveRachfordRiceVLE(state.L, state.K, state.components);
 [state, report] = nls.solveTimestep(state, 1000*year, eos);
 if ~report.StepReports{1}.Converged
     state = eos.updateAfterConvergence(state0, state, dt, struct());

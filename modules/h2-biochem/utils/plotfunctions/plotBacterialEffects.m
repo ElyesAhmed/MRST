@@ -29,7 +29,7 @@ function plotBacterialEffects(scenarios, timeYears, poro0, perm0)
 % SEE ALSO:
 %   setupBioCloggingModel, plotComponentProfiles
 
-figure('Position', [100, 100, 1000, 800]);
+paperFigure([20, 16], 'Bio-Clogging Effects');
 
 % Identify scenarios with bacterial concentration field
 nbioreact=scenarios{1}.model.biochemFluid.nbioreact;
@@ -42,7 +42,7 @@ if isempty(bioScenarios)
 end
 
 %% 1. Average bacterial concentration
-subplot(2, 2, 1);
+ax1 = subplot(2, 2, 1);
 hold on;
 for scenIdx = 1:numel(bioScenarios)
     scen = bioScenarios{scenIdx};
@@ -65,11 +65,11 @@ end
 title('Average Bacterial Concentration');
 xlabel('Time (years)');
 ylabel('Concentration');
-grid on;
-legend;
+legend('Box', 'off');
+styleAxes(ax1);
 
 %% 2. Porosity reduction
-subplot(2, 2, 2);
+ax2 = subplot(2, 2, 2);
 hold on;
 for scenIdx = 1:numel(bioScenarios)
     scen = bioScenarios{scenIdx};
@@ -94,10 +94,10 @@ end
 title('Porosity Reduction (Normalized)');
 xlabel('Time (years)');
 ylabel('Porosity / Initial Porosity');
-grid on;
+styleAxes(ax2);
 
 %% 3. Permeability reduction
-subplot(2, 2, 3);
+ax3 = subplot(2, 2, 3);
 hold on;
 for scenIdx = 1:numel(bioScenarios)
     scen = bioScenarios{scenIdx};
@@ -122,7 +122,7 @@ end
 title('Permeability Reduction (Normalized)');
 xlabel('Time (years)');
 ylabel('Permeability / Initial Permeability');
-grid on;
+styleAxes(ax3);
 
 %% Global title
 sgtitle('Bio-Clogging Effects');
@@ -143,7 +143,7 @@ end
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

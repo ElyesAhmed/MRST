@@ -1,5 +1,6 @@
 classdef BiochemistryModel < GenericOverallCompositionModel
-    % Biochemical model for compositional mixture with Hydrogen (H2)
+    % Base model coupling two-phase compositional flow to Monod-kinetics
+    % microbial growth/decay, with no PHREEQC geochemistry.
     %
     % SYNOPSIS:
     %   model = BiochemistryModel(G, rock, fluid)
@@ -7,9 +8,36 @@ classdef BiochemistryModel < GenericOverallCompositionModel
     %   model = BiochemistryModel(..., 'pn1', vn1, ...)
     %
     % DESCRIPTION:
-    %   This model forms the basis for simulation of bio-chemical systems within
-    %   compositional models. It couples a compositional model to a bio-chemical
-    %   reactions model, considering microbial growth and decay of Monod type.
+    %   BiochemistryModel is the foundation of the h2-biochem module's three
+    %   model classes: it fully-implicitly couples a compositional (Soreide-
+    %   Whitson EOS) flow model to a multi-population microbial reaction
+    %   model, with microbial growth/decay following Monod kinetics and H2
+    %   as the shared electron donor. All reaction source terms are
+    %   assembled directly into the same AD Jacobian as flow, so this class
+    %   never calls out to an external geochemistry engine -- pH, aqueous
+    %   speciation, and mineral equilibrium are not resolved.
+    %
+    %   Its capabilities include:
+    %     - Reaction-specific microbial populations (nbact), one balance
+    %       equation per metabolic reaction (biochemFluid.metabolicReaction).
+    %     - Optional sulfate-reducing-bacteria (SRB) chemistry via SO4/HS
+    %       aqueous tracers (sulfateReduction, set automatically from
+    %       biochemFluid), advected with the liquid phase.
+    %     - Optional microbial diffusion (bactDiffusion) and chemotaxis
+    %       toward higher H2 concentration (chemotaxisEffect).
+    %     - Optional molecular diffusion/mechanical dispersion of EOS
+    %       components (molecularDiffusion, molecularDispersion).
+    %     - Optional bio-clogging feedback on porosity/permeability, set up
+    %       separately via setupBioCloggingModel.
+    %
+    %   It also defines reactionsEnabled/localReactionMode, two flags that
+    %   exist purely so that SequentialBiochemistryPhreeqcModel (a
+    %   subclass of BiochemistryPhreeqcModel, itself a subclass of this
+    %   class) can build two single-purpose internal instances from it: one
+    %   with reactions disabled (global flow-only stage) and one with
+    %   spatial flux disabled (cell-local reaction-only stage). A plain
+    %   BiochemistryModel/BiochemistryPhreeqcModel run never needs to touch
+    %   these two flags.
     %
     % REQUIRED PARAMETERS:
     %   G         - Simulation grid
@@ -18,35 +46,49 @@ classdef BiochemistryModel < GenericOverallCompositionModel
     %   compFluid - Compositional fluid mixture (optional)
     %
     % OPTIONAL PARAMETERS:
-    %   'property' - Set property to the specified value
+    %   'bacteriamodel'       - Enable microbial growth/decay and its
+    %                           reaction source terms (default true).
+    %   'bactDiffusion'       - Enable microbial (Fickian) diffusion
+    %                           (default false).
+    %   'chemotaxisEffect'    - Enable chemotactic microbial migration
+    %                           toward dissolved H2 (default false).
+    %   'molecularDiffusion'  - Enable molecular diffusion of EOS
+    %                           components (default false).
+    %   'molecularDispersion' - Enable mechanical dispersion of EOS
+    %                           components (default false).
     %
     % RETURNS:
-    %   Class instance
+    %   model - BiochemistryModel class instance
     %
     % SEE ALSO:
+    %   BiochemistryPhreeqcModel, SequentialBiochemistryPhreeqcModel,
     %   ReservoirModel, ThreePhaseCompositionalModel
 
     properties
-        % Bio-chemical flags
+        % Reserved for future support of alternative bio-chemical
+        % formulations; only 'bacterialmodel' is currently implemented
+        % (enforced in the constructor).
         bacterialFormulation = 'bacterialmodel';
 
-        % Compositional fluid mixture
+        % Compositional fluid mixture (EOS component list/names).
         compFluid
 
-        %parameters for biochemical reactions
+        % Biochemical reaction database: stoichiometry, kinetic
+        % parameters, and yield/half-saturation constants per metabolic
+        % reaction (TableBioChemMixture instance).
         biochemFluid
 
         % Physical quantities and bounds
-        gammak   = [];                    % Stoichiometric coefficients
-        bacteriamodel = true;
+        gammak   = [];                    % Stoichiometric coefficients, one row per reaction, one column per EOS component
+        bacteriamodel = true;             % Master switch for the microbial growth/decay sub-model
         sulfateReduction = false;         % SO4/HS aqueous tracers active (set from biochemFluid)
         enableSulfateSource = true;       % Optional anhydrite sulfate source for SRB tracers
         bact_capProp = 3.0e0;             % Min nbact in the model
         bact_maxProp = 120;               % Max nbact in the model
-        molecularDiffusion = false;
-        molecularDispersion = false;
+        molecularDiffusion = false;       % Molecular diffusion of EOS components
+        molecularDispersion = false;      % Mechanical dispersion of EOS components
         bactDiffusion = false;            % Microbial diffusion
-        chemotaxisEffect = false;         % chemotaxis 
+        chemotaxisEffect = false;         % chemotaxis
 
         % Coarse-flow/local-reaction sequential split support (see
         % SequentialBiochemistryPhreeqcModel). Both default to standard,
@@ -167,6 +209,10 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function model = validateModel(model, varargin)
+            % Attach a bacteria-aware FacilityModel (BiochemistryGenericFacilityModel)
+            % when the microbial sub-model is active, otherwise fall back
+            % to the standard GenericFacilityModel, then delegate to the
+            % parent compositional model for the remaining validation.
             if model.bacteriamodel
                 if isempty(model.FacilityModel) || ...
                         ~isa(model.FacilityModel, 'BiochemistryGenericFacilityModel')
@@ -181,6 +227,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function model = setupStateFunctionGroupings(model, varargin)
+            % Register the microbial-kinetics state functions (growth,
+            % decay, and the resulting component conversion source) and
+            % the bacterial-mass property on top of the parent
+            % compositional groupings, so they participate in the AD
+            % dependency graph like any other flow property.
             model = setupStateFunctionGroupings@GenericOverallCompositionModel(model, varargin{:});
 
             fluxprops = model.FlowDiscretization;
@@ -214,6 +265,10 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function state = validateState(model, state)
+            % Ensure state carries the fields the microbial/SRB sub-models
+            % need (nbact, and the SO4/HS/lagged-H2S tracers when sulfate
+            % reduction is active), defaulting any that are missing,
+            % before delegating to the parent compositional validation.
             state = validateState@ThreePhaseCompositionalModel(model, state);
             if model.bacteriamodel && ~isfield(state, 'nbact')
                 nbact0 = 1e6;
@@ -239,6 +294,11 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function [vars, names, origin] = getPrimaryVariables(model, state)
+            % Primary variable set: pressure, overall composition (all but
+            % the first EOS component), microbial population nbact per
+            % reaction when bacteriamodel is active, extra non-EOS phase
+            % saturations, and SO4/HS when sulfateReduction is active, plus
+            % whatever the FacilityModel (well controls) contributes.
             [p, z] = model.getProps(state, 'pressure', 'z');
             z = ensureMinimumFraction(z, model.EOSModel.minimumComposition);
             z = expandMatrixToCell(z);
@@ -278,6 +338,18 @@ classdef BiochemistryModel < GenericOverallCompositionModel
             end
         end
         function [eqs, names, types, state] = getModelEquations(model, state0, state, dt, drivingForces, varargin)
+            % Assemble the full residual: EOS component conservation
+            % (with well sources and, if reactionsEnabled, the microbial
+            % component-conversion source BactConvRate), the microbial
+            % mass-balance equation per reaction (with optional spatial
+            % diffusion/chemotaxis flux and growth/decay source), the
+            % SO4/HS aqueous tracer balances when sulfateReduction is
+            % active, and finally the well/facility equations.
+            % localReactionMode drops all spatial flux-divergence terms
+            % (used by the reaction-only stage of the coarse-flow/
+            % local-reaction split); reactionsEnabled gates every
+            % microbial source term (used by the flow-only stage).
+            %
             % Discretize
             [eqs, flux, names, types] = model.FlowDiscretization.componentConservationEquations(model, state, state0, dt);
             src = model.FacilityModel.getComponentSources(state);
@@ -350,7 +422,6 @@ classdef BiochemistryModel < GenericOverallCompositionModel
                         beqs{i} = model.addBacterialDiffusionBC(beqs{i}, state, drivingForces, i);
                     else
                         % No diffusion: just accumulation term (pore-scale diffusion only)
-                         %beqs{1} = model.operators.AccDiv(beqs{1},0);
                     end
 
                     if model.reactionsEnabled
@@ -499,6 +570,9 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function forces = validateDrivingForces(model, forces, varargin)
+            % Delegate to the parent compositional model, then validate/
+            % normalize any Soreide-Whitson-specific forcing terms (e.g.
+            % salinity-dependent boundary conditions) when that EOS is used.
             forces = validateDrivingForces@GenericOverallCompositionModel(model, forces, varargin{:});
             if isa(model.EOSModel, 'SoreideWhitsonEos')
                 forces = validateCompositionalForcesSW(model, forces, varargin{:});
@@ -506,6 +580,12 @@ classdef BiochemistryModel < GenericOverallCompositionModel
         end
 
         function state = initStateAD(model, state, vars, names, origin)
+            % Distribute the flat primary-variable cell array (from
+            % getPrimaryVariables, after the Newton update) back onto the
+            % named state fields (pressure, nbact per reaction, SO4/HS
+            % when active, then the remaining EOS overall composition),
+            % converting composition back to mole fractions and delegating
+            % what's left to the parent compositional initStateAD.
             if model.bacteriamodel
 
                 isP = strcmp(names, 'pressure');
@@ -723,6 +803,10 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
         end
 
         function [fn, index] = getVariableField(model, name, varargin)
+            % Map a variable name to its state field and index, resolving
+            % nbact/SO4/HS and any per-reaction bacterial-population name
+            % (bactnames) before falling back to the parent compositional
+            % model's lookup for EOS component names.
             switch(lower(name))
                 case {'nbact', 'bacteriamodel'} %Bacteria model
                     index = ':';
@@ -753,6 +837,10 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
 
 
         function  [state, report] = updateAfterConvergence(model, state0, state, dt, drivingForces)
+            % After the parent compositional model accepts the converged
+            % step, accumulate this step's per-reaction H2 consumption
+            % (computeConvergedH2ConsumptionRate) into a running
+            % cumulativeH2ConsumptionMoles diagnostic carried in state.
             [state, report] = updateAfterConvergence@GenericOverallCompositionModel(model, state0, state, dt, drivingForces);
             if model.bacteriamodel
                 if isfield(state0, 'cumulativeH2ConsumptionMoles')
@@ -954,23 +1042,6 @@ function scale = getEquationScaling(model, eqs, names, state0, dt)
     end
 end
 
-function state = capSaturation(model, state, name, minvalue, maxvalue)
-% Ensure saturation remains within bounds
-v = model.getProp(state, name);
-if iscell(v)
-    for i = 1:numel(v)
-        val = v{i};
-        val = max(minvalue, val);
-        if nargin > 4, val = min(val, maxvalue); end
-        v{i} = val;
-    end
-else
-    v = max(minvalue, v);
-    if nargin > 4, v = min(v, maxvalue); end
-end
-state = model.setProp(state, name, v);
-end
-
 function flag = normalizeTransportFlag(flag, name)
 validateattributes(flag, {'logical', 'numeric'}, {'scalar', 'real', 'finite'}, ...
     mfilename, name);
@@ -978,7 +1049,7 @@ flag = logical(flag);
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

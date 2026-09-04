@@ -28,12 +28,12 @@ function plotComponentProfiles(scenarios, componentNames, timeYears)
 %   plotWellSols, plotToolbar
 
 % Create figure
-figure('Position', [100, 100, 1200, 800]);
+paperFigure([24, 16], 'Component Mole Fraction Evolution');
 nComp = numel(componentNames);
 
 % Loop over all components
 for compIdx = 1:nComp
-    subplot(2, 2, compIdx);
+    ax = subplot(2, 2, compIdx);
     hold on;
 
     % Loop over all scenarios
@@ -65,8 +65,8 @@ for compIdx = 1:nComp
     title(componentNames{compIdx});
     xlabel('Time (years)');
     ylabel('Average Mole Fraction');
-    grid on;
-    legend('Location', 'best');
+    legend('Location', 'best', 'Box', 'off');
+    styleAxes(ax);
 end
 
 % Add global title
@@ -74,7 +74,7 @@ sgtitle('Component Mole Fraction Evolution');
 end
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 

@@ -1,9 +1,14 @@
-for aa =1:1
-    % states = statesMonod; %scenarios{aa}.states;
-    % ws = wsMonod;%scenarios{aa}.ws;
-    %model = scenarios{aa}.model;
-    %schedule = scenarios{aa}.schedule;
+% H2consumptionTest - interactive post-processing diagnostic: reports and
+% plots per-reaction H2 consumption (MET/ACE/SRB) for a completed
+% simulation, and the fraction of injected H2 consumed overall.
+%
+% Requires `states`, `ws`, `model`, `schedule` (the outputs of a
+% simulateScheduleAD/simulateSequentialH2BiochemPhreeqc run) already in
+% the workspace. Not a function; not called from anywhere else in the
+% module. Paste-run after any of the module's example drivers to sanity
+% check H2 loss against the expected benchmark range.
 
+for aa = 1:1
     assert(numel(states) == numel(schedule.step.val), ...
         'states and schedule must contain the same number of timesteps.');
     assert(numel(ws) == numel(schedule.step.val), ...

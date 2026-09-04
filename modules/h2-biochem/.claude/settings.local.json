@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__matlab__check_matlab_code",
+      "WebFetch(domain:www.sciencedirect.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "PowerShell(wsl git -C /home/elyesa/Projects/MRST/modules/h2-biochem log --oneline -15 -- utils/setupH2StorageExampleWithSRB_benchmark.m)",
+      "PowerShell(wsl git -C /home/elyesa/Projects/MRST/modules/h2-biochem log -5 --format=\"%h %ad %s\" --date=iso -- utils/setupH2StorageExampleWithSRB_benchmark.m)",
+      "PowerShell(wsl git -C /home/elyesa/Projects/MRST/modules/h2-biochem log -10 --format=\"%h %ad %s\" --date=iso)",
+      "PowerShell(wsl git -C /home/elyesa/Projects/MRST/modules/h2-biochem show 1616b4638 --stat)",
+      "PowerShell(wsl bash -c \"cd /home/elyesa/Projects/MRST/modules/h2-biochem && git show 1e22ab943:modules/h2-biochem/models/BiochemistryPhreeqcModel.m | grep -n 'getAqueousTracerNames\\\\|hasMobileAqueousTracers'\")",
+      "PowerShell(wsl bash -c \"cd /home/elyesa/Projects/MRST/modules/h2-biochem && git show 1e22ab943:modules/h2-biochem/models/BiochemistryPhreeqcModel.m | sed -n '1010,1075p'\")"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "matlab"
+  ]
+}

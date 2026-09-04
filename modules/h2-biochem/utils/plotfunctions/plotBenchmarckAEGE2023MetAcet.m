@@ -102,20 +102,6 @@ legend({'CH3COOH total mass, archae'},...
     'FontSize',16,'TextColor','black','Location','west')
 
 
-% f20=figure('Name','results_nobact.totMassCH3COOH','NumberTitle','off');
-% f20.Position(3:4) = [900 700];
-% plot(1:nT,results_bact.xCH3COOH,'b','MarkerSize',7,'LineWidth',2)
-% hold on;
-% plot(1:nT,results_bact.yCH3COOH,'r--','MarkerSize',7,'LineWidth',2)
-% title(' CH3COOH x over time, no salt','FontSize',16,'FontWeight','bold','Color','k')
-% xlabel({'time (days)'},'FontWeight','bold','Color','k')
-% ylabel({'CH3COOH x'},'FontWeight','bold','Color','k')
-% ax = gca;
-% ax.FontSize = 16;
-% legend({'CH3COOH total mass in liquid phase','CH3COOH total mass, gas phase'},...
-%     'FontSize',16,'TextColor','black','Location','west')
-
-
 %Microbial population
 nbioreact=numel(nbact0);
 nbacteria= zeros(nT,nbioreact);
@@ -153,7 +139,7 @@ end
 
 
 %{
-Copyright 2009-2025 SINTEF Digital, Mathematics & Cybernetics.
+Copyright 2009-2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
 
