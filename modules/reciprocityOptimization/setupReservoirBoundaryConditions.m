@@ -54,7 +54,7 @@ switch lower(bcType)
 
     case 'top'
         % Top surface boundaries
-        topFaces = identifyBcFaces(G, 'Upper', [], [], []);
+        topFaces = identifyBcFaces(G, 'Left', [], [], []);
         data.bdFaces = topFaces;
         data.bdCells = sum(G.faces.neighbors(topFaces, :), 2);
 
@@ -65,12 +65,13 @@ switch lower(bcType)
         neighbors = G.faces.neighbors(seismicFaces, :);
         isWellFace = ismember(neighbors(:,1), wellCells) | ismember(neighbors(:,2), wellCells);
         seismicFaces = seismicFaces(~isWellFace);
+        seismicFaces = [wellFaces;seismicFaces(~isWellFace)];
         data.bdFaces = seismicFaces;
         data.bdCells = sum(G.faces.neighbors(seismicFaces, :), 2);
 
     case 'combined'
         % Combination of wells, top, and seismic faces
-        topFaces = identifyBcFaces(G, 'Upper', [], [], []);
+        topFaces = identifyBcFaces(G, 'Left', [], [], []);
         if nargin < 5
             seismicFaces = [];
         end

@@ -16,7 +16,7 @@ scaling.obj     = 3.2e7;      % objective scaling
 % Get initial scaled controls 
 u_base = schedule2control(schedule, scaling);
 % Define objective function
-d   = 0.05;    % yearly discount factor
+d   = 0.25;    % yearly discount factor
 ro  = 60;      % oil revenue/price ($/stb)
 rwp =  6;      % water production handling costs ($/stb)
 rwi =  6;      % water injection cost ($/stb) 

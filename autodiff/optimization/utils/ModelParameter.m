@@ -188,7 +188,7 @@ classdef ModelParameter
                     np = arrayfun(@(w)numel(w.cells), W(sub));
                 end
                 [i1, i2] = deal(cumsum([1;np(1:end-1)]), cumsum(np));
-                v  = applyFunction(@(i1,i2)v(i1:i2), i1, i2);
+                v  = applyFunction(@(i1)v(i1), i1);
                 if ~isempty(p.wellSubsets)
                     for k = 1:numel(sub)
                         tmp  = p.getfun(W(sub(k)), loc{wlocIx+1:end});

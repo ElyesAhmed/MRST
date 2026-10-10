@@ -41,7 +41,7 @@ modelRef_new = problem_new.SimulatorSetup.model;
 
 %% Create coarse models for both problems
 % Common grid partitioning
-blockIx = partitionUI(modelRef.G, [6, 6, 1]);
+blockIx = partitionUI(modelRef.G, [12, 12, 1]);
 blockIx = processPartition(modelRef.G, blockIx);
 blockIx = compressPartition(blockIx);
 
@@ -84,30 +84,36 @@ pv = modelCoarse.operators.pv;
 pv_new = modelCoarse_new.operators.pv;
 
 % Parameters for RATE-BHP problem (focus on transmissibility)
-config = {...
-     %name           include    scaling              boxlims   relativeLimits  
-    'porevolume',       1,     'linear',    [.01*pv, 1.5*pv],              []   
-    'conntrans',        1,        'log',                  [],     [1e-2, 1e2]      
-    'transmissibility', 1,        'log',                  [],     [1e-2, 1e2]  
-    'swl',              0,     'linear',             [0, .3],              []
-    'swcr',             0,     'linear',             [0, .4],              []
-    'swu',              0,     'linear',             [.7, 1],              []
-    'sowcr',            0,     'linear',             [0, .4],              []
-    'krw',              0,     'linear',           [.5, 1.5],              []
-    'kro',              0,     'linear',           [.5, 1.5],              []};
-
-% Parameters for BHP-RATE problem (focus on relperm and pore volume)
 config_new = {...
      %name           include    scaling              boxlims   relativeLimits  
-    'porevolume',       1,     'linear', [.01*pv_new, 1.5*pv_new],        []   
-    'conntrans',        0,        'log',                  [],     [1e-2, 1e2]      
-    'transmissibility', 0,        'log',                  [],     [1e-2, 1e2] 
-    'swl',              1,     'linear',             [0, .3],              []
-    'swcr',             1,     'linear',             [0, .4],              []
-    'swu',              1,     'linear',             [.7, 1],              []
-    'sowcr',            1,     'linear',             [0, .4],              []
-    'krw',              1,     'linear',           [.5, 1.5],              []
-    'kro',              1,     'linear',           [.5, 1.5],              []};
+    'porevolume',       0,     'linear',    [.005*pv, 2.5*pv],              []   
+    'conntrans',        1,        'log',                  [],     [1e-3, 1e3]      
+    'transmissibility', 1,        'log',                  [],     [1e-3, 1e3]  
+    'swl',              1,     'linear',             [0, .5],              []
+    'swcr',             1,     'linear',             [0, .5],              []
+    'swu',              1,     'linear',             [.5, 1],              []
+    'sowcr',            0,     'linear',             [0, .5],              []
+    'krw',              0,     'linear',           [.25, 2.5],              []
+    'kro',              0,     'linear',           [.25, 2.5],              []
+    'sw',              0,     'linear',            [.005, 0.5],            []
+    'pressure',              1,     'log',           [.895.*stateCoarse0.pressure, 1.5.*stateCoarse0.pressure], []
+    };
+
+% Parameters for BHP-RATE problem (focus on relperm and pore volume)
+config = {...
+     %name           include    scaling              boxlims   relativeLimits  
+    'porevolume',       1,     'linear', [.005*pv_new, 2.5*pv_new],        []   
+    'conntrans',        0,        'log',                  [],     [1e-3, 1e3]      
+    'transmissibility', 0,        'log',                  [],     [1e-3, 1e3] 
+    'swl',              0,     'linear',             [0, .5],              []
+    'swcr',             0,     'linear',             [0, .5],              []
+    'swu',              0,     'linear',             [.5, 1],              []
+    'sowcr',            1,     'linear',             [0, .5],              []
+    'krw',              1,     'linear',           [.25, 2.5],              []
+    'kro',              1,     'linear',           [.25, 2.5],              []
+    'sw',               1,     'linear',           [.005, 0.5],             [] 
+    'pressure',              0,     'log',           [.895.*stateCoarse0.pressure, 1.5.*stateCoarse0.pressure], []
+    };
 
 %% Initialize parameters for both problems
 parameters = [];
@@ -127,9 +133,13 @@ for k = 1:size(config_new,1)
 end
 
 %% Define mismatch function
-weighting  = {'WaterRateWeight', 1/(150/day), ...
-              'OilRateWeight',   1/(80/day), ...
+weighting  = {'WaterRateWeight', 1.0/(150/day), ...
+              'OilRateWeight',   1.0/(80/day), ...
               'BHPWeight',      1/(20*barsa)};
+
+weighting3  = {'WaterRateWeight', 1/(150/day), ...
+              'OilRateWeight',   1/(80/day), ...
+              'BHPWeight',      1.0/(20*barsa)};
           
 mismatchFn = @(model, states, schedule, states_ref, compDer, tstep, state) ...
     matchObservedOW(model, states, schedule, states_ref,...
@@ -153,8 +163,8 @@ combined_params.rate_bhp = parameters;
 combined_params.bhp_rate = parameters_new;
 
 % Optimization settings
-maxIt_alt = 5;   % Number of alternations between problems
-maxIt = 6;        % Iterations per alternation
+maxIt_alt = 15;   % Number of alternations between problems
+maxIt = 25;        % Iterations per alternation
 tol = 1e-4;       % Tolerance for convergence
 history = struct('obj', [], 'obj_new', [], 'params', [], 'params_new', []);
 t = 0.5;
@@ -165,6 +175,11 @@ mismatchFn2 = @(model, states, schedule, states_ref, compDer, tstep, state) ...
         'computePartials', compDer, 'tstep', tstep, weighting{:},...
         'state', state, 'from_states', false, 'mismatchSum', false);
 
+
+mismatchFn3 = @(model, states, schedule, states_ref, compDer, tstep, state) ...
+    matchObservedOW(model, states, schedule, states_ref, ...
+        'computePartials', compDer, 'tstep', tstep, weighting3{:},...
+        'state', state, 'from_states', false, 'mismatchSum', false);
 % Main optimization loop
 for i = 1:maxIt_alt
     fprintf('\n=== Alternation %d of %d ===\n', i, maxIt_alt);
@@ -208,7 +223,7 @@ for i = 1:maxIt_alt
     % 3. Optimize BHP-RATE problem
     fprintf('Optimizing BHP-RATE problem...\n');
     p_opt_new = getScaledParameterVector(setup_init_new, combined_params.bhp_rate);
-    objh2_new = @(p) evaluateMatchSummands(p, mismatchFn2, setup_init_new, combined_params.bhp_rate, statesRef_new);
+    objh2_new = @(p) evaluateMatchSummands(p, mismatchFn3, setup_init_new, combined_params.bhp_rate, statesRef_new);
     [v2_new, p_opt_new, history2_new] = unitBoxLM(p_opt_new, objh2_new, 'maxIt', maxIt);
     
     % Update BHP-RATE model

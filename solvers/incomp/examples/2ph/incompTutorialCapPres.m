@@ -132,7 +132,8 @@ pv     = poreVolume(G,rock);
 %% Start the main loop
 t  = 0; plotNo = 1;
 h1 = 'No pc - '; h2 = 'Linear pc - ';
-e = []; p_org = []; p_pc = [];
+e = []; p_org = []; p_pc = [];              %     repmat(150/6, 6, 1)*day, ...
+
 clf;
 
 while t < T,

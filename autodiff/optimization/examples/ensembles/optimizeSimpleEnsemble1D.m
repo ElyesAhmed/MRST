@@ -1,3 +1,5 @@
+clear all;
+
 %% Run an NPV-optimization problem over an ensemble of simple 1D-models
 mrstModule add ad-core ad-blackoil ad-props mrst-gui optimization ensemble
 
@@ -9,10 +11,11 @@ mrstModule add ad-core ad-blackoil ad-props mrst-gui optimization ensemble
 objective      = @NPVOW;
 objectiveOpts  = {'OilPrice',           40/stb, ...
                   'WaterInjectionCost'   5/stb, ...
-                  'WaterProductionCost', 4/stb};
+                  'WaterProductionCost', 4/stb, ...
+                  'DiscountFactor', 0.5};
               
 % Setup base problems
-numRealizations = 2;
+numRealizations = 1;
 problems = cell(1, numRealizations);
 for k =1:numRealizations
     problems{k} = setupFnSimpleProblem1D(k);
@@ -38,6 +41,7 @@ bnds  = processBounds(W, 'rate(inj)',  [.1*irate, 3*irate], ... % allowed target
                              'lrat(prod)', [-3*irate, -.1*irate]);  % allowed lower lrat-limit                                              
 [maps, u] = setupSimulationControlMappings(schedule, bnds);
 
+% [maps, u] = reduceControlMappings(maps, u, 'type', {'rate', 'lrat'});
 
 % It can be advantageous to provide an objective value guess (at least order 
 % of magnitude), to help the optimizer in setting an initial step-length. 
@@ -65,7 +69,13 @@ p = OptimizationProblem(samples, ...
 p.reset('prompt', false)
 u = p.optimize(problems{1}, 'stepInit', .1, 'maxIt', 6);
 
-
+%% Compare results
+p1 = p.getSampleProblem(1);
+scheduleopt= p1.SimulatorSetup.schedule;
+model= p1.SimulatorSetup.model;
+state0 = p1.SimulatorSetup.state0;
+[wellSolutions, states] = simulateScheduleAD(state0, model, scheduleopt);
+npv = NPVOW(model, states,scheduleopt, objectiveOpts{:});
 %% Copyright Notice
 %
 % <html>

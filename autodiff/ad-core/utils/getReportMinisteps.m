@@ -1,51 +1,44 @@
-function timesteps = getReportMinisteps(report)
+
+function timesteps = getReportMinisteps(report, schedule)
 % Get the timesteps used for the ministeps of a report
-%
-% SYNOPSIS:
-%   timesteps = getReportMinisteps(report)
-%
-% DESCRIPTION:
-%   Get the actual ministeps used by simulateScheduleAD.
-%
-% REQUIRED PARAMETERS:
-%   report - Report from simulateScheduleAD. 
-%
-% RETURNS:
-%   timesteps - The timesteps used to solve the problem. These differ from
-%               the control steps (schedule.step.val) in that they are the
-%               actual timesteps taken by the solver (due to timestep
-%               cutting, adaptive timestepping and so on)
-%
-% SEE ALSO:
-%   SimulateScheduleAD
-
-%{
-Copyright 2009-2024 SINTEF Digital, Mathematics & Cybernetics.
-
-This file is part of The MATLAB Reservoir Simulation Toolbox (MRST).
-
-MRST is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-MRST is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with MRST.  If not, see <http://www.gnu.org/licenses/>.
-%}
+% Optional schedule input to verify against control steps
+    
     timesteps = [];
     if iscell(report)
         report = struct('ControlstepReports', {report});
     end
+    
+    % Get all converged ministeps
     for i = 1:numel(report.ControlstepReports)
         cr = report.ControlstepReports{i};
         steprep = cr.StepReports(cellfun(@(x) x.Converged, cr.StepReports));
-        timesteps = [timesteps; cellfun(@(x) x.Timestep, steprep)]; %#ok
+        current_steps = cellfun(@(x) x.Timestep, steprep);
+        timesteps = [timesteps; current_steps]; %#ok
+    end
+    
+    % If schedule is provided, try to match control step count
+    if nargin > 1 && ~isempty(schedule)
+        expected_steps = numel(schedule.step.val);
+        actual_steps = numel(timesteps);
+        
+        if actual_steps > expected_steps
+            % Likely due to timestep cutting - sum ministeps to match control steps
+            control_step_times = cumsum(schedule.step.val);
+            simulation_times = cumsum(timesteps);
+            
+            % Find indices where simulation times match control step times
+            match_indices = [];
+            for t = 1:numel(control_step_times)
+                [~, idx] = min(abs(simulation_times - control_step_times(t)));
+                match_indices = [match_indices; idx]; %#ok
+            end
+            
+            % Extract timesteps that complete each control step
+            if numel(match_indices) == expected_steps
+                timesteps = timesteps(match_indices);
+            else
+                warning('Could not perfectly match control steps. Using all ministeps.');
+            end
+        end
     end
 end
-
-

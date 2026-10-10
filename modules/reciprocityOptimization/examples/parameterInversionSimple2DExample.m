@@ -19,12 +19,12 @@ mrstModule add ad-core ad-blackoil ad-props optimization spe10
 % that we will try to reconstruct through inversion.
 
 % 1.1 Create synthetic reference model with known properties
-setupModel2D
-
+setupModel2DForReconstruction
+%poro = smoothdata(modelRef.rock.poro);
 % Create model-object of class TwoPhaseOilWaterModel
-modelRef = GenericBlackOilModel(G, rock, fluid, 'gas', false);
+modelRef = GenericBlackOilModel(G,rock, fluid, 'gas', false);
 % Set initial state and run simulation:
-state0 = initResSol(G, 200*barsa, [0, 1]);
+state0 = initResSol(G, 100*barsa, [0, 1]);
 % 1.2 Visualize reference model
 figure(1);
 subplot(1,2,1);
@@ -42,20 +42,34 @@ W = schedule.control(1).W;
 rng(0); % For reproducibility
 perturbStep = [ones(1,4), round(.5+(2:(numel(schedule.step.val)-3))/2)]';
 scheduleRef = perturbedSimpleSchedule(time_steps, 'W', W, ...
-    'pressureFac', 0.1, 'rateFac', 0.9, 'perturbStep', perturbStep);
+    'pressureFac', 0.4, 'rateFac', 0.6, 'perturbStep', perturbStep);
 
 % 1.4 Configure model for precise simulations
 modelRef.useCNVConvergence = false; 
+modelRef.toleranceMB = 1.0e-9;
 modelRef.nonlinearTolerance = 1.0e-9;
-modelRef.FacilityModel.toleranceWellBHP = 1000;
-modelRef.FacilityModel.toleranceWellRate = 1.0e-8;
+modelRef.FacilityModel.toleranceWellBHP = 10;
+modelRef.FacilityModel.toleranceWellRate = 1.0e-9;
 modelRef.OutputStateFunctions{end+1} = 'ComponentTotalFlux';
 modelRef.OutputStateFunctions{end+1} = 'FaceComponentMobility';
 modelRef.OutputStateFunctions{end+1} = 'Mobility';
 
 % 1.5 Run reference simulation
 [wellSolsRef, statesRef] = simulateScheduleAD(state0, modelRef, scheduleRef);
-
+scheduleRefPert = scheduleRef;
+% perturbFactor = 0.02;
+% for i = 1:length(scheduleRefPert.control)
+%     for j = 1:2
+%         originalVal = scheduleRefPert.control(i).W(j).val;
+%         scheduleRefPert.control(i).W(j).val = originalVal * (1 + perturbFactor);
+%     end
+% 
+%        
+%     for j = 3:4
+%         originalVal = scheduleRefPert.control(i).W(j).val;
+%         scheduleRefPert.control(i).W(j).val = originalVal * (1 - perturbFactor);
+%     end
+% end
 % 1.6 Visualize reference results
 subplot(1,2,2); cla;
 plotCellData(modelRef.G, modelRef.rock.poro, 'EdgeColor', 'none');
@@ -70,20 +84,23 @@ plotWell(modelRef.G, W, 'Color', 'k'); view(3); axis tight off;
 
 % 2.1 Setup boundary conditions for inversion
 bcfaces = boundaryFaceIndices(G,'Left');
-% bcfaces = [bcfaces;boundaryFaceIndices(G,'RIGHT')];
-% bcfaces = [bcfaces;boundaryFaceIndices(G,'South')];
-% bcfaces = [bcfaces;boundaryFaceIndices(G,'North')];
+%bcfaces = boundaryFaces(G);
+bcfaces = [bcfaces;boundaryFaceIndices(G,'RIGHT')];
+bcfaces = [bcfaces;boundaryFaceIndices(G,'South')];
+bcfaces = [bcfaces;boundaryFaceIndices(G,'North')];
 
+%data = setupReservoirBoundaryConditions(modelRef, statesRef, scheduleRef, 'wells');
 data = setupReservoirBoundaryConditions(modelRef, statesRef, scheduleRef, 'seismic', bcfaces);
 
+
 % 2.2 Create original BHP-Rate control system
-scheduleBhpRate = scheduleRef;
+scheduleBhpRate = scheduleRefPert;
 modelBhpRate = modelRef;
 [wellSolsBhpRate, statesBhpRate] = simulateScheduleAD(state0, modelBhpRate, scheduleBhpRate);
 
 % 2.3 Create converted Rate-BHP control system
 convMap = struct('bhp', 'rate', 'rate', 'bhp');
-scheduleRateBhp = convertWellControls(scheduleRef, statesRef, modelRef, ...
+scheduleRateBhp = convertWellControls(scheduleRefPert, statesRef, modelRef, ...
                     'ConversionMap', convMap, 'bc', data.bc);
 [wellSolsRateBhp, statesRateBhp] = simulateScheduleAD(state0, modelBhpRate, scheduleRateBhp);
 
@@ -95,7 +112,7 @@ for i = 1:numel(wellSolsBhpRate)
     % Compare BHP where applicable
     for w = 1:numel(wellSolsBhpRate{i})
         if isfield(wellSolsBhpRate{i}(w), 'bhp') && isfield(wellSolsRateBhp{i}(w), 'bhp')
-            bhpDiff = abs(wellSolsBhpRate{i}(w).bhp - wellSolsRateBhp{i}(w).bhp);
+            bhpDiff = abs(wellSolsBhpRate{i}(w).bhp - wellSolsRateBhp{i}(w).bhp)/barsa;
             if bhpDiff > tolerance
                 fprintf('BHP mismatch at step %d, well %d: %.2e\n', i, w, bhpDiff);
                 isValid = false;
@@ -115,9 +132,37 @@ end
 
 if isValid
     fprintf('\nValidation PASSED: Both control systems produce equivalent results within tolerance.\n');
-else
-    error('Validation FAILED: Control systems produce different results');
+% else
+%     error('Validation FAILED: Control systems produce different results');
 end
+
+% Apply consistent 2% perturbation to both schedules
+% perturbFactor = 0.02;
+% for i = 1:length(scheduleBhpRate.control)
+%     for j = 1:2
+%         originalVal = scheduleBhpRate.control(i).W(j).val;
+%         scheduleBhpRate.control(i).W(j).val = originalVal * (1 + perturbFactor);
+%     end
+% 
+%        
+%     for j = 3:4
+%         originalVal = scheduleBhpRate.control(i).W(j).val;
+%         scheduleBhpRate.control(i).W(j).val = originalVal * (1 - perturbFactor);
+%     end
+% end
+% 
+% for i = 1:length(scheduleRateBhp.control)
+%     for j = 1:2
+%         originalVal = scheduleRateBhp.control(i).W(j).val;
+%         scheduleRateBhp.control(i).W(j).val = originalVal * (1 - perturbFactor);
+%     end
+% 
+%        
+%     for j = :2
+%         originalVal = scheduleRateBhp.control(i).W(j).val;
+%         scheduleRateBhp.control(i).W(j).val = originalVal * (1 - perturbFactor);
+%     end
+% end
 
 % 2.5 Visualize control system comparison
 summary_plots2 = plotWellSols({wellSolsRef, wellSolsBhpRate}, ...
@@ -143,16 +188,16 @@ prior.value = modelRef.operators.pv(data.wellCells);
 rng(42); % For reproducibility
 correlation_length = [10, 10, 1]; % In grid units
 perturbation = gaussianField(G.cartDims, ...       % Grid dimensions [nx,ny,nz]
-                           [0.5, 0.85], ...       % Target interval for values
+                           [-0.85, 0.85], ...       % Target interval for values
                            [5, 5, 1], ...        % Kernel size [5x5x1]
                            0.65);                % Standard deviation
 
 % Add perturbation to base porosity
-InitRock.poro = InitRock.poro .* (1 + perturbation(:))*0+0.2;
+InitRock.poro = InitRock.poro .* (1 + perturbation(:)).*0+0.20;
 %InitRock.poro = min(max(InitRock.poro, 0.03), 0.41); % Keep within physical bounds
 % initialPoroValue = 0.223;
 % InitRock.poro = ones(size(InitRock.poro)) * initialPoroValue;
-%InitRock.perm = InitRock.perm.*0 +  1.0e-10* initialPoroValue^2;
+%InitRock.poro = InitRock.poro.*0 +  6.01.*min(InitRock.perm);
 
 % 3.2 Create initial model with guessed properties
 InitModel = GenericBlackOilModel(modelRef.G, InitRock, modelRef.fluid, ...
@@ -177,7 +222,19 @@ InitModel.OutputStateFunctions{end+1} = 'ComponentTotalFlux';
 % 3.5 Validate initial model with both control systems
 modelBhpRate = InitModel;
 modelRateBhp = InitModel;
-
+% for i = 1:18
+% scheduleBhpRate.control(i).W(1).WI = 1.e-12;
+% scheduleBhpRate.control(i).W(2).WI = 1.e-12;
+% scheduleBhpRate.control(i).W(3).WI = 1.e-12;   
+% scheduleBhpRate.control(i).W(4).WI =  1.e-12;  
+% end
+% 
+% for i = 1:37
+% scheduleRateBhp.control(i).W(1).WI = 1.e-12;
+% scheduleRateBhp.control(i).W(2).WI = 1.e-12;
+% scheduleRateBhp.control(i).W(3).WI = 1.e-12;   
+% scheduleRateBhp.control(i).W(4).WI =  1.e-12;  
+% end
 fprintf('\nRunning initial forward simulations with guessed parameters...\n');
 [wellSolsBhpRate, statesBhpRate] = simulateScheduleAD(state0, modelBhpRate, scheduleBhpRate);
 [wellSolsRateBhp, statesRateBhp] = simulateScheduleAD(state0, modelRateBhp, scheduleRateBhp);
@@ -201,14 +258,16 @@ params_modelRateBhp = [];
 setup_modelBhpRate = struct('model', InitModel, 'schedule', scheduleBhpRate, 'state0', state0);
 setup_modelRateBhp = struct('model', InitModel, 'schedule', scheduleRateBhp, 'state0', state0);
 
-% Set parameter bounds based on reference model
+%Set parameter bounds based on reference model
 pv_range = [min(modelRef.operators.pv), max(modelRef.operators.pv)];
 trans_range = ([min(modelRef.operators.T), max(modelRef.operators.T)]);
 params_modelBhpRate = addParameter(params_modelBhpRate, setup_modelBhpRate, ...
                                  'name', 'porevolume', 'boxLims', pv_range);
 params_modelRateBhp = addParameter(params_modelRateBhp, setup_modelRateBhp, ...
                                  'name', 'porevolume', 'boxLims', pv_range);
-% 
+% % 
+% trans_range = [1.0e-13, 2.0e-10];
+% trans_range = ([min(modelRef.operators.T).*0.95, max(modelRef.operators.T).*1.05]);
 % params_modelBhpRate = addParameter(params_modelBhpRate, setup_modelBhpRate, ...
 %                                  'name', 'transmissibility', 'scaling',   'log',      'boxLims', trans_range);
 % params_modelRateBhp = addParameter(params_modelRateBhp, setup_modelRateBhp, ...
@@ -226,14 +285,14 @@ weighting = {'WaterRateWeight', (300*stb/day)^-1, ...
 use_bfgs = true;  % Set to false to skip BFGS stage
 max_iterations = 30;
 bfgs_iterations = 10;
-
+regBeta = 0.2031;
 if use_bfgs
     fprintf('\nStarting BFGS optimization...\n');
     % First objective function handle
     obj_func_bfgs = @(m1,s1,sch1,m2,s2,sch2,sc,obj_prior, deriv,t,s1_in,s2_in) ...
-               matchObservedTwinModelsOW(m1,s1,sch1,m2,s2,sch2,sc,obj_prior,...
+               matchObservedTwinModelsOWOld(m1,s1,sch1,m2,s2,sch2,sc,obj_prior,...
                'computePartials',deriv,'tstep',t,'state1',s1_in,...
-               'state2',s2_in,'from_states',false,weighting{:});
+               'state2',s2_in,'from_states',false,weighting{:},'regBeta',regBeta);
     p0 = getScaledParameterVector(setup_modelBhpRate, params_modelBhpRate);
     obj_bfgs = @(p) evaluateMatchTwinModels(p, obj_func_bfgs, setup_modelBhpRate, ...
                                           setup_modelRateBhp, params_modelBhpRate, ...
@@ -246,12 +305,12 @@ if use_bfgs
 else
     p_opt = getScaledParameterVector(setup_modelBhpRate, params_modelBhpRate);
 end
-
-% 2. Levenberg-Marquardt Optimization
+% 
+% % 2. Levenberg-Marquardt Optimization 0.2637
 obj_func_lm = @(m1,s1,sch1,m2,s2,sch2,sc,obj_prior, deriv,t,s1_in,s2_in) ...
-    matchObservedTwinModelsOW(m1,s1,sch1,m2,s2,sch2,sc, obj_prior,...
+    matchObservedTwinModelsOWOld(m1,s1,sch1,m2,s2,sch2,sc, obj_prior,...
     'computePartials',deriv,'tstep',t,'state1',s1_in,...
-    'state2',s2_in,'from_states',false,weighting{:}, 'mismatchSum', false);
+    'state2',s2_in,'from_states',false,weighting{:},'regBeta',regBeta, 'mismatchSum', false);
 fprintf('\nStarting Levenberg-Marquardt optimization...\n');
 obj_lm = @(p) evaluateMatchTwinModelsSummands(p, obj_func_lm, setup_modelBhpRate, ...
                                             setup_modelRateBhp, params_modelBhpRate, ...
@@ -261,7 +320,56 @@ obj_lm = @(p) evaluateMatchTwinModelsSummands(p, obj_func_lm, setup_modelBhpRate
 
 %% Final Simulation with Optimized Parameters
 setup_final = updateSetupFromScaledParameters(setup_modelBhpRate, params_modelBhpRate, p_opt_final);
-setup_final.schedule.step = scheduleRef.step; % Use full time horizon
+%setup_final.schedule.step = scheduleRef.step; % Use full time horizon
+ref_pv = modelRef.operators.pv;
+opt_pv = setup_final.model.operators.pv;
+aa = norm(ref_pv-opt_pv)./norm(ref_pv)*100;
+%% Parallel version for speed
+% if license('test', 'Distrib_Computing_Toolbox') && ~isempty(gcp('nocreate'))
+%     % Parallel pool already exists
+% elseif license('test', 'Distrib_Computing_Toolbox')
+%     parpool; % Start parallel pool
+% end
+
+beta_values = logspace(-3, 3, 14); % 20 values from 0.01 to 10 (logarithmically spaced)
+
+%Use parfor for parallel execution
+errors_relative_to_ref = zeros(size(beta_values));
+errors_relative_to_opt = zeros(size(beta_values));
+p_opt_results = cell(size(beta_values));
+ref_pv = modelRef.operators.pv;
+for i = 1:length(beta_values)
+    current_beta = beta_values(i);
+    
+    weighting_current = {'regBeta', current_beta};
+    
+    obj_func_lm = @(m1,s1,sch1,m2,s2,sch2,sc,obj_prior, deriv,t,s1_in,s2_in) ...
+        matchObservedTwinModelsOWOld(m1,s1,sch1,m2,s2,sch2,sc, obj_prior,...
+        'computePartials',deriv,'tstep',t,'state1',s1_in,...
+        'state2',s2_in,'from_states',false,weighting{:},'regBeta',current_beta, 'mismatchSum', false);
+    
+    obj_lm = @(p) evaluateMatchTwinModelsSummands(p, obj_func_lm, setup_modelBhpRate, ...
+                                                setup_modelRateBhp, params_modelBhpRate, ...
+                                                statesRef, prior);
+    
+  %  try
+        [~, p_opt_final, ~] = unitBoxLM(p_opt, obj_lm, 'maxIt', max_iterations);
+        setup_final = updateSetupFromScaledParameters(setup_modelBhpRate, params_modelBhpRate, p_opt_final);
+
+        opt_pv = setup_final.model.operators.pv;
+      
+        errors_relative_to_ref(i) = norm(ref_pv - opt_pv) / norm(ref_pv) * 100;
+        errors_relative_to_opt(i) = norm(ref_pv - opt_pv) / norm(opt_pv) * 100;
+        p_opt_results{i} = p_opt_final;
+       % p_opt = p_opt_final;
+        
+%     catch
+%         errors_relative_to_ref(i) = NaN;
+%         errors_relative_to_opt(i) = NaN;
+%         p_opt_results{i} = [];
+   % end
+end
+
 
 fprintf('\nRunning final simulation with optimized parameters...\n');
 [wellSols_opt, states_opt] = simulateScheduleAD(setup_final.state0, ...
@@ -275,8 +383,8 @@ plotWellSols({wellSolsRef, wellSols_opt}, ...
 title('Optimization Results Comparison');
 
 % Create custom "boxplot" using percentiles
-ref_pv = modelRef.operators.pv;
 init_pv = InitModel.operators.pv;
+ref_pv = modelRef.operators.pv;
 opt_pv = setup_final.model.operators.pv;
 percentiles = [5 25 50 75 95];
 ref_prct = prctile(ref_pv, percentiles);

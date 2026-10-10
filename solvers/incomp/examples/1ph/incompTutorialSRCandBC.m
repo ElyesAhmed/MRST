@@ -10,7 +10,8 @@ mrstModule add incomp
 % 1000 kg/m^3.
 nx = 20; ny = 20; nz = 10;
 G = cartGrid([nx, ny, nz]);
-G = computeGeometry(G);
+G = computeGeometry(G);              %     repmat(150/6, 6, 1)*day, ...
+
 rock = makeRock(G, 100*milli*darcy, 1);
 fluid     = initSingleFluid('mu' ,    1*centi*poise     , ...
                             'rho', 1014*kilogram/meter^3);

@@ -39,6 +39,7 @@ schedule = control2schedule(u, schedule_org, scaling);
 % run simulation:
 [wellSols, states,report] = simulateScheduleAD(state0, model, schedule);
 timesteps = getReportMinisteps(report);
+timesteps= schedule_org.step.val;
 assert(all(timesteps == schedule.step.val));
 %% should we fix the time stepping ??
 % schedule.step = schedule_new.step

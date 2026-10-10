@@ -23,7 +23,7 @@ along with MRST.  If not, see <http://www.gnu.org/licenses/>.
 
 nx = 100;
 rng(nx*n);
-G = cartGrid(100, 1000*meter);
+G = cartGrid(50, 100*meter);
 G = computeGeometry(G);
 
 % One pore-volumes with maximum porosity
@@ -35,15 +35,15 @@ perm  = poro.^3.*(1e-5)^2./(0.81*72*(1-poro).^2);
 rock = makeRock(G, perm, poro);
 
 dt = rampupTimesteps(time, time/50);
-fluid = initSimpleADIFluid('mu', [1, 3]*centi*poise, 'n', [2, 2], 'phases', 'wo', 'cR', 1e-8/barsa, 'c', [1e-6, 1e-5]/barsa);
+fluid = initSimpleADIFluid('mu', [1, 3]*centi*poise, 'n', [2, 2], 'phases', 'wo');%, 'cR', 1e-8/barsa, 'c', [1e-6, 1e-5]/barsa);
 
 state0 = initResSol(G, 100*barsa, [0, 1]);
 
 % setup injector and producer
 W = addWell([], G, rock,           1, 'Type', 'rate', 'Val', irate,     'Name', 'I', 'comp_i', [1 0], ...
-            'Sign',  1, 'lims', struct('bhp', 450*barsa, 'rate', irate));
+            'Sign',  1);
 W = addWell(W,  G, rock, G.cells.num, 'Type', 'bhp',  'Val', 100*barsa, 'Name', 'P', 'comp_i', [0 1], ...
-            'Sign', -1, 'lims', struct('lrat', -2*irate, 'bhp', 100*barsa));
+            'Sign', -1);
 schedule = simpleSchedule(dt, 'W', W);
 
 model       = GenericBlackOilModel(G, rock, fluid, 'gas', false);

@@ -194,6 +194,9 @@ function compi = getNormalizedCompi(wellSol, activePhases)
     
     % Return only compi for active phases
     compi = compi(activePhases);
+    if sum(compi)==0
+        compi(1) =1;
+    end
 end
 
 function compi = setCompiForActivePhases(activePhases, targetPhase)
